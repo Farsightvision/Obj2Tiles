@@ -13,11 +13,11 @@ async function publishDotnet() {
 
     try {
         const { stdout, stderr } = await exec(command);
-
         // if (stdout) console.log(`STDOUT:\n${stdout}`);
         // if (stderr) console.error(`STDERR:\n${stderr}`);
+        console.log('Published!');
     } catch (err) {
-        console.error('Error:\n${err.message}`);
+        console.error(`Error:\n${err.message}`);
         if (err.stdout) console.log(`STDOUT:\n${err.stdout}`);
         if (err.stderr) console.error(`STDERR:\n${err.stderr}`);
     }
