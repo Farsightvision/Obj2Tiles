@@ -16,6 +16,7 @@ public class MeshT : IMesh
 {
     private const double GoldenRatio = 0.618;
     private List<Vertex3> _vertices;
+    private List<RGB> _vertexColors;
     private List<Vertex2> _textureVertices;
     private readonly List<FaceT> _faces;
     private List<Material> _materials;
@@ -39,6 +40,7 @@ public class MeshT : IMesh
         _textureVertices = [..textureVertices];
         _faces = [..faces];
         _materials = [..materials];
+        _vertexColors = new List<RGB>();
     }
 
     public int Split(IVertexUtils utils, double q, out IMesh left,
@@ -737,7 +739,13 @@ public class MeshT : IMesh
 
         if (clusterRects.Count == 0)
             return;
-        
+
+        _vertexColors.Clear();
+        for (var i = 0; i < _vertices.Count; i++)
+        {
+            _vertexColors.Add(new RGB(1, 1, 1));
+        }
+
         clusterInfos.Sort((a, b) => b.cluster.Count.CompareTo(a.cluster.Count));
         var edgeLength = (int)Math.Sqrt(totalTextureArea);
         var powerOfTwo = Common.NextPowerOfTwo(edgeLength);
@@ -929,6 +937,22 @@ public class MeshT : IMesh
                 hasTex = true;
                 Common.CopyImage(tex, atlasTexture, clusterX, adjustedSourceY, clusterW, clusterH,
                     packedRect.X, adjustedDestY);
+
+                foreach (var faceIndex in cluster)
+                {
+                    var face = _faces[faceIndex];
+                    var vtA = _textureVertices[face.TextureIndexA];
+                    var vtB = _textureVertices[face.TextureIndexB];
+                    var vtC = _textureVertices[face.TextureIndexC];
+                    
+                    var colorA = tex[(int)(vtA.X * texWidth), (int)(vtA.Y * texHeight)];
+                    var colorB = tex[(int)(vtB.X * texWidth), (int)(vtB.Y * texHeight)];
+                    var colorC = tex[(int)(vtC.X * texWidth), (int)(vtC.Y * texHeight)];
+
+                    _vertexColors[face.IndexA] = Common.ConvertToRGB(colorA);
+                    _vertexColors[face.IndexB] = Common.ConvertToRGB(colorB);
+                    _vertexColors[face.IndexC] = Common.ConvertToRGB(colorC);
+                }
             }
 
             if (norm != null)
@@ -1370,14 +1394,29 @@ public class MeshT : IMesh
 
             writer.WriteLine("mtllib {0}", Path.GetFileName(materialsPath));
 
-            foreach (var vertex in _vertices)
+            for (int i = 0; i < _vertices.Count; i++)
             {
+                var vertex = _vertices[i];
+                
                 writer.Write("v ");
                 writer.Write(vertex.X);
                 writer.Write(" ");
                 writer.Write(vertex.Y);
                 writer.Write(" ");
-                writer.WriteLine(vertex.Z);
+                writer.Write(vertex.Z);
+
+                if (_vertexColors.Count > i)
+                {
+                    var vertexColor = _vertexColors[i];
+                    writer.Write(" ");
+                    writer.Write(vertexColor.R);
+                    writer.Write(" ");
+                    writer.Write(vertexColor.G);
+                    writer.Write(" ");
+                    writer.Write(vertexColor.B);
+                }
+                
+                writer.WriteLine();
             }
 
             foreach (var textureVertex in _textureVertices)

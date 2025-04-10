@@ -1,4 +1,5 @@
 ﻿using Obj2Tiles.Library.Geometry;
+using Obj2Tiles.Library.Materials;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
@@ -39,6 +40,11 @@ public static class Common
                 }
             }
         });
+    }
+
+    public static RGB ConvertToRGB(Rgba32 color)
+    {
+        return new RGB(color.R / 255.0, color.G / 255.0, color.B / 255.0);
     }
     
     public static double Area(Vertex2 a, Vertex2 b, Vertex2 c)
