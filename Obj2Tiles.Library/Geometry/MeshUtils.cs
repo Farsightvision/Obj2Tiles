@@ -318,5 +318,103 @@ public class MeshUtils
         return count + tasks.Sum(t => t.Result);
     }
 
+    public static async Task<double> CalculateOptimalBounds(IMesh mesh, int optimalVertices)
+    {
+        var meshes = new ConcurrentBag<IMesh>();
+        await RecurseSplitXY(mesh, 3, mesh.Bounds, meshes);
+        var biggestMesh = meshes.MaxBy(m => m.VertexCount);
+        var vertexDensity = biggestMesh.VertexCount / (biggestMesh.Bounds.Width * biggestMesh.Bounds.Height);
+        var tileSize = Math.Sqrt(optimalVertices / vertexDensity);
+        return tileSize;
+    }
+    
+    public static async Task<int> SplitByTileSizeXY (IMesh mesh, double tileSize, ConcurrentBag<IMesh> meshes)
+    {
+        var bounds = mesh.Bounds;
+        tileSize = Math.Min(tileSize, Math.Min(bounds.Height, bounds.Width));
+        var xMin = bounds.Min.X;
+        var xMax = bounds.Max.X;
+        var cols = new List<IMesh>();
+        var currentMesh = mesh;
+        var colNumber = 1;
+
+        for (double x = xMin + tileSize; x < xMax; x += tileSize)
+        {
+            currentMesh.Split(xutils3, x, out var left, out var right);
+
+            if (left.FacesCount > 0)
+            {
+                left.Name = $"{Mesh.DefaultName}_{ColumnNumberToName(colNumber)}!";
+                cols.Add(left);
+            }
+            
+            currentMesh = right;
+            colNumber++;
+        }
+
+        if (currentMesh.FacesCount > 0)
+        {
+            currentMesh.Name = $"{Mesh.DefaultName}_{ColumnNumberToName(colNumber)}!";
+            cols.Add(currentMesh);
+        }
+        
+        var yMin = bounds.Min.Y;
+        var yMax = bounds.Max.Y;
+        var tasks = new List<Task>();
+        
+        for (var i = 0; i < cols.Count; i++)
+        {
+            var col = cols[i];
+            var positionY = yMin + tileSize;
+            tasks.Add(Task.Run(() => RecurseSplitByY(col, positionY, tileSize, yMax, meshes, 1)));
+        }
+        
+        await Task.WhenAll(tasks);
+        return meshes.Count;
+    }
+
+    private static void RecurseSplitByY(IMesh mesh, double positionY, double tileSize, double yMax, ConcurrentBag<IMesh> meshes, int row)
+    {
+        mesh.Split(yutils3, positionY, out var left, out var right);
+
+        if (left.FacesCount > 0)
+        {
+            var name = left.Name;
+            var split = name.Split('!');
+            left.Name = $"{split[0]}{row}";
+            meshes.Add(left);
+        }
+
+        row++;
+        var newPositionY = positionY + tileSize;
+
+        if (newPositionY < yMax)
+        {
+            RecurseSplitByY(right, newPositionY, tileSize, yMax, meshes, row);
+        }
+        else
+        {
+            if (right.FacesCount > 0)
+            {
+                var name = right.Name;
+                var split = name.Split('!');
+                right.Name = $"{split[0]}{row}";
+                meshes.Add(right);
+            }
+        }
+    }
+    
+    private static string ColumnNumberToName(int columnNumber)
+    {
+        string columnName = "";
+        while (columnNumber > 0)
+        {
+            columnNumber--;
+            columnName = (char)('A' + (columnNumber % 26)) + columnName;
+            columnNumber /= 26;
+        }
+        return columnName;
+    }
+
     #endregion
 }

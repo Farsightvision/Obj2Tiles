@@ -69,6 +69,19 @@ public static class Common
         x |= (x >> 16);
         return (x + 1);
     }
+    
+    public static int PreviousPowerOfTwo(int x)
+    {
+        if (x <= 1) return 0;
+
+        x |= (x >> 1);
+        x |= (x >> 2);
+        x |= (x >> 4);
+        x |= (x >> 8);
+        x |= (x >> 16);
+    
+        return x - (x >> 1);
+    }
 
     /// <summary>
     /// Gets the distance of P from A (in percent) relative to segment AB

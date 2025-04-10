@@ -75,9 +75,8 @@ public static partial class StagesFacade
 
         if (bounds != null)
         {
-            count = zSplit
-                ? await MeshUtils.RecurseSplitXYZ(mesh, divisions, bounds, meshes)
-                : await MeshUtils.RecurseSplitXY(mesh, divisions, bounds, meshes);
+            var tileSize = await MeshUtils.CalculateOptimalBounds(mesh, divisions);
+            count = await MeshUtils.SplitByTileSizeXY(mesh, tileSize, meshes);
         }
         else
         {
