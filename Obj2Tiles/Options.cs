@@ -14,8 +14,14 @@ public sealed class Options
     [Option('s', "stage", Required = false, HelpText = "Stage to stop at (Decimation, Splitting, Tiling)", Default = Stage.Tiling)]
     public Stage StopAt { get; set; }
 
-    [Option('d', "divisions", Required = false, HelpText = "How many tiles divisions", Default = 2)]
-    public int Divisions { get; set; }
+    // [Option('d', "divisions", Required = false, HelpText = "How many tiles divisions", Default = 2)]
+    // public int Divisions { get; set; }
+    
+    [Option("maxVerticesPerTile", Required = false, HelpText = "Splitting by vertex count per tile. Approximate value", Default = 4000)]
+    public int MaxVerticesPerTile { get; set; }
+    
+    [Option("packingThreshold", Required = false, HelpText = "Minimum fill ratio required to skip texture compression. If the atlas is less packed than this, compression is applied.", Default = 0.618)]
+    public double PackingThreshold { get; set; }
     
     [Option('z', "zsplit", Required = false, HelpText = "Splits along z-axis too", Default = false)]
     public bool ZSplit { get; set; }    

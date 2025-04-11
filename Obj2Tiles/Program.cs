@@ -67,14 +67,14 @@ namespace Obj2Tiles
 
                 Console.WriteLine();
                 Console.WriteLine(
-                    $" => Splitting stage with {opts.Divisions} divisions {(opts.ZSplit ? "and Z-split" : "")}");
+                    $" => Splitting stage with {opts.MaxVerticesPerTile} vertices per tile {(opts.ZSplit ? "and Z-split" : "")}");
 
                 destFolderSplit = opts.StopAt == Stage.Splitting
                     ? opts.Output
                     : createTempFolder($"{pipelineId}-obj2tiles-split");
 
-                var boundsMapper = await StagesFacade.Split(decimateRes.DestFiles, destFolderSplit, opts.Divisions,
-                    opts.ZSplit, decimateRes.Bounds, opts.KeepOriginalTextures);
+                var boundsMapper = await StagesFacade.Split(decimateRes.DestFiles, destFolderSplit, opts.MaxVerticesPerTile,
+                    opts.ZSplit, decimateRes.Bounds, opts.PackingThreshold, opts.KeepOriginalTextures);
 
                 Console.WriteLine(" ?> Splitting stage done in {0}", sw.Elapsed);
 
@@ -163,7 +163,7 @@ namespace Obj2Tiles
                 return false;
             }
 
-            if (opts.Divisions < 0)
+            if (opts.MaxVerticesPerTile < 0)
             {
                 Console.WriteLine(" !> Divisions must be non-negative");
                 return false;

@@ -14,7 +14,7 @@ namespace Obj2Tiles.Library.Geometry;
 
 public class MeshT : IMesh
 {
-    private const double GoldenRatio = 0.618;
+    private double _packingThreshold;
     private List<Vertex3> _vertices;
     private List<RGB> _vertexColors;
     private List<Vertex2> _textureVertices;
@@ -34,8 +34,9 @@ public class MeshT : IMesh
     public TexturesStrategy TexturesStrategy { get; set; }
 
     public MeshT(IEnumerable<Vertex3> vertices, IEnumerable<Vertex2> textureVertices,
-        IEnumerable<FaceT> faces, IEnumerable<Material> materials)
+        IEnumerable<FaceT> faces, IEnumerable<Material> materials, double packingThreshold)
     {
+        _packingThreshold = packingThreshold;
         _vertices = [..vertices];
         _textureVertices = [..textureVertices];
         _faces = [..faces];
@@ -193,11 +194,11 @@ public class MeshT : IMesh
         var orderedRightTextureVertices = rightTextureVertices.OrderBy(x => x.Value).Select(x => x.Key);
         var leftMaterials = _materials.Select(mat => (Material)mat.Clone());
 
-        left = new MeshT(orderedLeftVertices, orderedLeftTextureVertices, leftFaces, leftMaterials)
+        left = new MeshT(orderedLeftVertices, orderedLeftTextureVertices, leftFaces, leftMaterials, _packingThreshold)
         {
             Name = $"{Name}-{utils.Axis}L"
         };
-        right = new MeshT(orderedRightVertices, orderedRightTextureVertices, rightFaces, rightMaterials)
+        right = new MeshT(orderedRightVertices, orderedRightTextureVertices, rightFaces, rightMaterials, _packingThreshold)
         {
             Name = $"{Name}-{utils.Axis}R"
         };
@@ -751,7 +752,7 @@ public class MeshT : IMesh
         var powerOfTwo = Common.NextPowerOfTwo(edgeLength);
         var fraction = totalTextureArea / powerOfTwo / powerOfTwo;
 
-        if (fraction > GoldenRatio)
+        if (fraction > _packingThreshold)
             edgeLength = powerOfTwo;
         else
             edgeLength = (int)(edgeLength * 1.01);

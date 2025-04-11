@@ -92,7 +92,7 @@ public static partial class StagesFacade
 
         var algorithm = new FastQuadricMeshSimplification
         {
-            PreserveSeams = true,
+            //PreserveSeams = true,
             Verbose = true,
             PreserveBorders = true
         };

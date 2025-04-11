@@ -8,11 +8,11 @@ namespace Obj2Tiles.Stages;
 public static partial class StagesFacade
 {
     public static async Task<Dictionary<string, Box3>[]> Split(string[] sourceFiles, string destFolder, int divisions,
-        bool zsplit, Box3 bounds, bool keepOriginalTextures = false)
+        bool zsplit, Box3 bounds, double packingThreshold, bool keepOriginalTextures = false)
     {
         var tasks = new List<Task<Dictionary<string, Box3>>>();
         var lod0File = sourceFiles[0];
-        var mesh = MeshUtils.LoadMesh(lod0File, out _);
+        var mesh = MeshUtils.LoadMesh(lod0File, packingThreshold, out _);
         var tileSize = await MeshUtils.CalculateOptimalTileSize(mesh, divisions);
 
         for (var index = 0; index < sourceFiles.Length; index++)
@@ -24,7 +24,7 @@ public static partial class StagesFacade
             var textureStrategy = keepOriginalTextures ? TexturesStrategy.KeepOriginal :
                 index == 0 ? TexturesStrategy.Repack : TexturesStrategy.RepackCompressed;
 
-            var splitTask = Split(file, dest, tileSize, zsplit, bounds, textureStrategy);
+            var splitTask = Split(file, dest, tileSize, packingThreshold, zsplit, bounds, textureStrategy);
 
             tasks.Add(splitTask);
         }
@@ -35,8 +35,7 @@ public static partial class StagesFacade
     }
 
     public static async Task<Dictionary<string, Box3>> Split(string sourcePath, string destPath, double tileSize,
-        bool zSplit = false,
-        Box3? bounds = null,
+        double packingThreshold, bool zSplit = false, Box3? bounds = null,
         TexturesStrategy textureStrategy = TexturesStrategy.Repack,
         SplitPointStrategy splitPointStrategy = SplitPointStrategy.VertexBaricenter)
     {
@@ -48,7 +47,7 @@ public static partial class StagesFacade
         Console.WriteLine($" -> Loading OBJ file \"{sourcePath}\"");
 
         sw.Start();
-        var mesh = MeshUtils.LoadMesh(sourcePath, out var deps);
+        var mesh = MeshUtils.LoadMesh(sourcePath, packingThreshold,  out var deps);
 
         Console.WriteLine(
             $" ?> Loaded {mesh.VertexCount} vertices, {mesh.FacesCount} faces in {sw.ElapsedMilliseconds}ms");
