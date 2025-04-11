@@ -318,20 +318,20 @@ public class MeshUtils
         return count + tasks.Sum(t => t.Result);
     }
 
-    public static async Task<double> CalculateOptimalBounds(IMesh mesh, int optimalVertices)
+    public static async Task<double> CalculateOptimalTileSize(IMesh mesh, int optimalVertices)
     {
         var meshes = new ConcurrentBag<IMesh>();
         await RecurseSplitXY(mesh, 3, mesh.Bounds, meshes);
-        var biggestMesh = meshes.MaxBy(m => m.VertexCount);
-        var vertexDensity = biggestMesh.VertexCount / (biggestMesh.Bounds.Width * biggestMesh.Bounds.Height);
+        var biggestMeshes = meshes.OrderByDescending(m => m.VertexCount).Take(3).ToArray();
+        var biggestMesh = biggestMeshes[0];
+        var averageVertexCount = biggestMeshes.Average(m => m.VertexCount);
+        var vertexDensity = averageVertexCount / (biggestMesh.Bounds.Width * biggestMesh.Bounds.Height);
         var tileSize = Math.Sqrt(optimalVertices / vertexDensity);
         return tileSize;
     }
     
-    public static async Task<int> SplitByTileSizeXY (IMesh mesh, double tileSize, ConcurrentBag<IMesh> meshes)
+    public static async Task<int> SplitByTileSizeXY (IMesh mesh, Box3 bounds, double tileSize, ConcurrentBag<IMesh> meshes)
     {
-        var bounds = mesh.Bounds;
-        tileSize = Math.Min(tileSize, Math.Min(bounds.Height, bounds.Width));
         var xMin = bounds.Min.X;
         var xMax = bounds.Max.X;
         var cols = new List<IMesh>();

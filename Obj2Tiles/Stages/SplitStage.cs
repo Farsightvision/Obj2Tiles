@@ -10,8 +10,10 @@ public static partial class StagesFacade
     public static async Task<Dictionary<string, Box3>[]> Split(string[] sourceFiles, string destFolder, int divisions,
         bool zsplit, Box3 bounds, bool keepOriginalTextures = false)
     {
-      
         var tasks = new List<Task<Dictionary<string, Box3>>>();
+        var lod0File = sourceFiles[0];
+        var mesh = MeshUtils.LoadMesh(lod0File, out _);
+        var tileSize = await MeshUtils.CalculateOptimalTileSize(mesh, divisions);
 
         for (var index = 0; index < sourceFiles.Length; index++)
         {
@@ -22,7 +24,7 @@ public static partial class StagesFacade
             var textureStrategy = keepOriginalTextures ? TexturesStrategy.KeepOriginal :
                 index == 0 ? TexturesStrategy.Repack : TexturesStrategy.RepackCompressed;
 
-            var splitTask = Split(file, dest, divisions, zsplit, bounds, textureStrategy);
+            var splitTask = Split(file, dest, tileSize, zsplit, bounds, textureStrategy);
 
             tasks.Add(splitTask);
         }
@@ -32,7 +34,7 @@ public static partial class StagesFacade
         return tasks.Select(task => task.Result).ToArray();
     }
 
-    public static async Task<Dictionary<string, Box3>> Split(string sourcePath, string destPath, int divisions,
+    public static async Task<Dictionary<string, Box3>> Split(string sourcePath, string destPath, double tileSize,
         bool zSplit = false,
         Box3? bounds = null,
         TexturesStrategy textureStrategy = TexturesStrategy.Repack,
@@ -51,21 +53,20 @@ public static partial class StagesFacade
         Console.WriteLine(
             $" ?> Loaded {mesh.VertexCount} vertices, {mesh.FacesCount} faces in {sw.ElapsedMilliseconds}ms");
 
-        if (divisions == 0)
-        {
-            Console.WriteLine(" -> Skipping split stage, just compressing textures and cleaning up the mesh");
-
-            if (mesh is MeshT t)
-                t.TexturesStrategy = TexturesStrategy.Compress;
-            
-            mesh.WriteObj(Path.Combine(destPath, $"{mesh.Name}.obj"));
-            
-            return new Dictionary<string, Box3> { { mesh.Name, mesh.Bounds } };
-            
-        }
+        // if (divisions == 0)
+        // {
+        //     Console.WriteLine(" -> Skipping split stage, just compressing textures and cleaning up the mesh");
+        //
+        //     if (mesh is MeshT t)
+        //         t.TexturesStrategy = TexturesStrategy.Compress;
+        //     
+        //     mesh.WriteObj(Path.Combine(destPath, $"{mesh.Name}.obj"));
+        //     
+        //     return new Dictionary<string, Box3> { { mesh.Name, mesh.Bounds } };
+        //     
+        // }
                 
-        Console.WriteLine(
-            $" -> Splitting with a depth of {divisions}{(zSplit ? " with z-split" : "")}");
+        Console.WriteLine($" -> Splitting by TileSize {tileSize}");
 
         var meshes = new ConcurrentBag<IMesh>();
 
@@ -73,24 +74,23 @@ public static partial class StagesFacade
 
         int count;
 
-        if (bounds != null)
-        {
-            var tileSize = await MeshUtils.CalculateOptimalBounds(mesh, divisions);
-            count = await MeshUtils.SplitByTileSizeXY(mesh, tileSize, meshes);
-        }
-        else
-        {
-            Func<IMesh, Vertex3> getSplitPoint = splitPointStrategy switch
-            {
-                SplitPointStrategy.AbsoluteCenter => m => m.Bounds.Center,
-                SplitPointStrategy.VertexBaricenter => m => m.GetVertexBaricenter(),
-                _ => throw new ArgumentOutOfRangeException(nameof(splitPointStrategy))
-            };
-
-            count = zSplit
-                ? await MeshUtils.RecurseSplitXYZ(mesh, divisions, getSplitPoint, meshes)
-                : await MeshUtils.RecurseSplitXY(mesh, divisions, getSplitPoint, meshes);
-        }
+        // if (bounds != null)
+        // {
+            count = await MeshUtils.SplitByTileSizeXY(mesh, bounds, tileSize, meshes);
+        // }
+        // else
+        // {
+        //     Func<IMesh, Vertex3> getSplitPoint = splitPointStrategy switch
+        //     {
+        //         SplitPointStrategy.AbsoluteCenter => m => m.Bounds.Center,
+        //         SplitPointStrategy.VertexBaricenter => m => m.GetVertexBaricenter(),
+        //         _ => throw new ArgumentOutOfRangeException(nameof(splitPointStrategy))
+        //     };
+        //
+        //     count = zSplit
+        //         ? await MeshUtils.RecurseSplitXYZ(mesh, divisions, getSplitPoint, meshes)
+        //         : await MeshUtils.RecurseSplitXY(mesh, divisions, getSplitPoint, meshes);
+        // }
 
         sw.Stop();
 
