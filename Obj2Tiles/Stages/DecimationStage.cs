@@ -14,12 +14,8 @@ public static partial class StagesFacade
         var sourceObjMesh = new ObjMesh();
         sourceObjMesh.ReadFile(sourcePath);
         var bounds = sourceObjMesh.Bounds;
-
         var fileName = Path.GetFileName(sourcePath);
-        var originalSourceFile = Path.Combine(destPath, fileName);
-        File.Copy(sourcePath, originalSourceFile, true);
-
-        var destFiles = new List<string> { originalSourceFile };
+        var destFiles = new List<string>();
         var tasks = new List<Task>();
 
         for (var index = 0; index < lods.Length; index++)
@@ -30,9 +26,18 @@ public static partial class StagesFacade
             if (File.Exists(destFile))
                 File.Delete(destFile);
 
-            Console.WriteLine(" -> Decimating mesh {0} with quality {1:0.00}", fileName, lod.Quality);
-            tasks.Add(Task.Run(() => InternalDecimate(sourceObjMesh, destFile, lod.Quality)));
-            destFiles.Add(destFile);
+            if (lod.Quality >= 1)
+            {
+                Console.WriteLine(" -> Copy mesh {0}", fileName);
+                File.Copy(sourcePath, destFile, true);
+                destFiles.Add(destFile);
+            }
+            else
+            {
+                Console.WriteLine(" -> Decimating mesh {0} with quality {1:0.00}", fileName, lod.Quality);
+                tasks.Add(Task.Run(() => InternalDecimate(sourceObjMesh, destFile, lod.Quality)));
+                destFiles.Add(destFile);
+            }
         }
 
         await Task.WhenAll(tasks);

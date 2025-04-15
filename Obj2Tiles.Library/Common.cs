@@ -9,8 +9,9 @@ namespace Obj2Tiles.Library;
 public static class Common
 {
     public static readonly double Epsilon = double.Epsilon * 10;
-    
-    public static void CopyImage(Image<Rgba32> sourceImage, Image<Rgba32> dest, int sourceX, int sourceY, int sourceWidth, int sourceHeight, int destX, int destY)
+
+    public static void CopyImage(Image<Rgba32> sourceImage, Image<Rgba32> dest, int sourceX, int sourceY,
+        int sourceWidth, int sourceHeight, int destX, int destY)
     {
         var height = sourceHeight;
 
@@ -25,6 +26,7 @@ public static class Common
                 {
                     sourceAccessorIndex %= sourceAccessor.Height;
                 }
+
                 var sourceRow = sourceAccessor.GetRowSpan(sourceAccessorIndex);
                 var targetRow = targetAccessor.GetRowSpan(i + destY);
 
@@ -36,7 +38,8 @@ public static class Common
                     {
                         sourceRowIndex %= sourceRow.Length;
                     }
-                    targetRow[x + destX] = sourceRow[sourceRowIndex];// 
+
+                    targetRow[x + destX] = sourceRow[sourceRowIndex]; // 
                 }
             }
         });
@@ -46,7 +49,7 @@ public static class Common
     {
         return new RGB(color.R / 255.0, color.G / 255.0, color.B / 255.0);
     }
-    
+
     public static double Area(Vertex2 a, Vertex2 b, Vertex2 c)
     {
         return Math.Abs(
@@ -62,7 +65,6 @@ public static class Common
         var v1 = c - a;
         var v2 = v0.Cross(v1);
         return v2;
-        
     }
 
     public static int NextPowerOfTwo(int x)
@@ -75,7 +77,7 @@ public static class Common
         x |= (x >> 16);
         return (x + 1);
     }
-    
+
     public static int PreviousPowerOfTwo(int x)
     {
         if (x <= 1) return 0;
@@ -85,8 +87,19 @@ public static class Common
         x |= (x >> 4);
         x |= (x >> 8);
         x |= (x >> 16);
-    
+
         return x - (x >> 1);
+    }
+
+    public static int ClosestPowerOfTwo(int x)
+    {
+        var lowerPower = PreviousPowerOfTwo(x);
+
+        if (lowerPower == x)
+            return lowerPower;
+        
+        var upperPower = NextPowerOfTwo(x);
+        return (x - lowerPower < upperPower - x) ? lowerPower : upperPower;
     }
 
     /// <summary>
@@ -102,7 +115,6 @@ public static class Common
         var subEdge1Length = a.Distance(p);
         return subEdge1Length / edge1Length;
     }
-
 }
 
 public class FormattingStreamWriter : StreamWriter
@@ -112,5 +124,6 @@ public class FormattingStreamWriter : StreamWriter
     {
         FormatProvider = formatProvider;
     }
+
     public override IFormatProvider FormatProvider { get; }
 }

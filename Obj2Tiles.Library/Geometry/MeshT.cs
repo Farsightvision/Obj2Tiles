@@ -1,6 +1,5 @@
 ﻿using System.Diagnostics;
 using System.Globalization;
-using System.Numerics;
 using Obj2Tiles.Library.Algos;
 using Obj2Tiles.Library.Materials;
 using SixLabors.ImageSharp;
@@ -15,6 +14,7 @@ namespace Obj2Tiles.Library.Geometry;
 public class MeshT : IMesh
 {
     private double _packingThreshold;
+    private double _textureQuality;
     private List<Vertex3> _vertices;
     private List<RGB> _vertexColors;
     private List<Vertex2> _textureVertices;
@@ -34,9 +34,10 @@ public class MeshT : IMesh
     public TexturesStrategy TexturesStrategy { get; set; }
 
     public MeshT(IEnumerable<Vertex3> vertices, IEnumerable<Vertex2> textureVertices,
-        IEnumerable<FaceT> faces, IEnumerable<Material> materials, double packingThreshold)
+        IEnumerable<FaceT> faces, IEnumerable<Material> materials, double packingThreshold, double textureQuality)
     {
         _packingThreshold = packingThreshold;
+        _textureQuality = textureQuality;
         _vertices = [..vertices];
         _textureVertices = [..textureVertices];
         _faces = [..faces];
@@ -194,11 +195,11 @@ public class MeshT : IMesh
         var orderedRightTextureVertices = rightTextureVertices.OrderBy(x => x.Value).Select(x => x.Key);
         var leftMaterials = _materials.Select(mat => (Material)mat.Clone());
 
-        left = new MeshT(orderedLeftVertices, orderedLeftTextureVertices, leftFaces, leftMaterials, _packingThreshold)
+        left = new MeshT(orderedLeftVertices, orderedLeftTextureVertices, leftFaces, leftMaterials, _packingThreshold, _textureQuality)
         {
             Name = $"{Name}-{utils.Axis}L"
         };
-        right = new MeshT(orderedRightVertices, orderedRightTextureVertices, rightFaces, rightMaterials, _packingThreshold)
+        right = new MeshT(orderedRightVertices, orderedRightTextureVertices, rightFaces, rightMaterials, _packingThreshold, _textureQuality)
         {
             Name = $"{Name}-{utils.Axis}R"
         };
@@ -750,7 +751,7 @@ public class MeshT : IMesh
         var powerOfTwo = Common.NextPowerOfTwo(edgeLength);
         var fraction = totalTextureArea / powerOfTwo / powerOfTwo;
 
-        if (fraction > _packingThreshold)
+        if (_textureQuality >= 1 && fraction > _packingThreshold)
             edgeLength = powerOfTwo;
         else
             edgeLength = (int)(edgeLength * 1.01);
@@ -822,12 +823,13 @@ public class MeshT : IMesh
         var taskTex = new Task(t =>
         {
             var tx = t as Image<Rgba32>;
-            var targetPowerOfTwo = Common.PreviousPowerOfTwo(tx.Width);
+            var compressedTextureWidth = (int)(tx.Width * _textureQuality);
+            var targetPowerOfTwo = Math.Min(Common.PreviousPowerOfTwo(tx.Width), Common.ClosestPowerOfTwo(compressedTextureWidth));
 
             if (tx.Width != targetPowerOfTwo)
             {
-                var quality = (float)targetPowerOfTwo / tx.Width * 100;
-                Console.WriteLine($"Downscale {tx.Width} => {targetPowerOfTwo} {quality:F0}% [{Name}]");
+                var quality = (float)targetPowerOfTwo / tx.Width;
+                Console.WriteLine($"Downscale {tx.Width} => {targetPowerOfTwo} {quality:F2}% (target Quality {_textureQuality:F2}) [{Name}]");
                 tx.Mutate(x => x.Resize(new ResizeOptions
                 {
                     Size = new Size(targetPowerOfTwo, targetPowerOfTwo),

@@ -7,12 +7,12 @@ namespace Obj2Tiles.Library.Geometry;
 
 public class MeshUtils
 {
-    public static IMesh LoadMesh(string fileName, double packingThreshold)
+    public static IMesh LoadMesh(string fileName, double packingThreshold, double textureQuality)
     {
-        return LoadMesh(fileName, packingThreshold, out _);
+        return LoadMesh(fileName, packingThreshold, textureQuality, out _);
     }
     
-    public static IMesh LoadMesh(string fileName, double packingThreshold, out string[] dependencies)
+    public static IMesh LoadMesh(string fileName, double packingThreshold, double textureQuality, out string[] dependencies)
     {
         using var reader = new StreamReader(fileName);
 
@@ -139,7 +139,7 @@ public class MeshUtils
         dependencies = deps.ToArray();
         
         return textureVertices.Count != 0
-            ? new MeshT(vertices, textureVertices, facesT, materials, packingThreshold)
+            ? new MeshT(vertices, textureVertices, facesT, materials, packingThreshold, textureQuality)
             : new Mesh(vertices, faces);
     }
 
