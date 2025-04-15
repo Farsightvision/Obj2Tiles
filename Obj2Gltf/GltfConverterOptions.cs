@@ -1,5 +1,4 @@
-﻿using System;
-using System.Text;
+﻿using System.Text;
 
 namespace SilentWave.Obj2Gltf
 {
@@ -19,5 +18,7 @@ namespace SilentWave.Obj2Gltf
         /// Default is false
         /// </summary>
         public bool DeleteOriginals { get; set; } = false;
+        public bool SaveVertexColor { get; set; } = true;
+        public bool SaveUv { get; set; } = true;
     }
 }

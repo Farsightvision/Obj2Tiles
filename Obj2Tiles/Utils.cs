@@ -156,27 +156,29 @@ public static class Utils
         }
     }
     
-    public static void ConvertGltf(string objPath, string destPath)
+    public static void ConvertGltf(string objPath, string destPath, bool saveColor, bool saveUv)
     {
         var name = Path.GetFileNameWithoutExtension(objPath);
         var converter = Converter.MakeDefault();
         var outputFile = Path.Combine(destPath, $"{name}.gltf");
-        converter.Convert(objPath, outputFile);
+        var converterOptions = new GltfConverterOptions { SaveVertexColor = saveColor, SaveUv = saveUv };
+        converter.Convert(objPath, outputFile, converterOptions);
     }
     
-    public static void ConvertGlb(string objPath, string destPath)
+    public static void ConvertGlb(string objPath, string destPath, bool saveColor, bool saveUv)
     {
         var dir = Path.GetDirectoryName(objPath);
         var name = Path.GetFileNameWithoutExtension(objPath);
 
-        var converter = Converter.MakeDefault();
+        var gltfConverter = Converter.MakeDefault();
         var gltfOutputFile = dir == null ? $"{name}.gltf" : Path.Combine(dir, $"{name}.gltf");
 
-        converter.Convert(objPath, gltfOutputFile);
+        var converterOptions = new GltfConverterOptions { SaveVertexColor = saveColor, SaveUv = saveUv };
+        gltfConverter.Convert(objPath, gltfOutputFile, converterOptions);
         
         var glbOutputFile = Path.Combine(destPath, $"{name}.glb");
-        var glbConv = new Gltf2GlbConverter();
-        glbConv.Convert(new Gltf2GlbOptions(gltfOutputFile, glbOutputFile));
+        var glbConverter = new Gltf2GlbConverter();
+        glbConverter.Convert(new Gltf2GlbOptions(gltfOutputFile, glbOutputFile));
     }
     
     public static void ConvertB3dm(string objPath, string destPath)
