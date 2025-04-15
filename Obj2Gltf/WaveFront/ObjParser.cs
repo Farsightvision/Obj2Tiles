@@ -74,7 +74,6 @@ namespace SilentWave.Obj2Gltf.WaveFront
 
             using (_reader)
             {
-                model.Materials.Add(new Material() { Ambient = new Reflectivity(new FactorColor(1)) });
                 var currentMaterialName = "default";
                 var currentGeometries = model.GetOrAddGeometries("default");
                 Face currentFace = null;
@@ -97,6 +96,15 @@ namespace SilentWave.Obj2Gltf.WaveFront
                             float.Parse(strs[1], NumberStyles.Float, CultureInfo.InvariantCulture.NumberFormat),
                             float.Parse(strs[2], NumberStyles.Float, CultureInfo.InvariantCulture.NumberFormat));
                         model.Vertices.Add(v);
+
+                        if (strs.Length == 6)
+                        {
+                            var c = new SVec3(
+                                float.Parse(strs[3], NumberStyles.Float, CultureInfo.InvariantCulture.NumberFormat),
+                                float.Parse(strs[4], NumberStyles.Float, CultureInfo.InvariantCulture.NumberFormat),
+                                float.Parse(strs[5], NumberStyles.Float, CultureInfo.InvariantCulture.NumberFormat));
+                            model.Colors.Add(c);
+                        }
                     }
                     else if (StartWith(line, Statements.VectorNormal))
                     {
@@ -126,8 +134,7 @@ namespace SilentWave.Obj2Gltf.WaveFront
                     }
                     else if (StartWith(line, Statements.UseMaterial))
                     {
-                        var umtl = line.Substring(7).Trim();
-                        currentMaterialName = umtl;
+                        currentMaterialName = line.Substring(7).Trim();
                     }
                     else if (StartWith(line, Statements.Face))
                     {

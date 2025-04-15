@@ -25,6 +25,10 @@ namespace SilentWave.Obj2Gltf.WaveFront
         /// </summary>
         public List<SVec3> Normals { get; set; } = new List<SVec3>();
         /// <summary>
+        /// vertices color list
+        /// </summary>
+        public List<SVec3> Colors { get; set; } = new List<SVec3>();
+        /// <summary>
         /// vertices texture coordinates list
         /// </summary>
         public List<SVec2> Uvs { get; set; } = new List<SVec2>();

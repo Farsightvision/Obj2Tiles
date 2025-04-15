@@ -1,0 +1,27 @@
+﻿namespace Obj2Tiles.Stages;
+
+public static class ConvertFacade
+{
+    public static void Convert(string sourcePath, string destPath, int lods)
+    {
+        var filesToConvert = new List<Tuple<string, string>>();
+
+        for (var lod = 0; lod < lods; lod++)
+        {
+            var files = Directory.GetFiles(Path.Combine(sourcePath, "LOD-" + lod), "*.obj");
+
+            foreach (var file in files)
+            {
+                var outputFolder = Path.Combine(destPath, "LOD-" + lod);
+                Directory.CreateDirectory(outputFolder);
+                filesToConvert.Add(new Tuple<string, string>(file, outputFolder));
+            }
+        }
+
+        Parallel.ForEach(filesToConvert, (file) =>
+        {
+            Console.WriteLine($" -> Converting to gltf '{file.Item1}'");
+            Utils.ConvertGlb(file.Item1, file.Item2);
+        });
+    }
+}

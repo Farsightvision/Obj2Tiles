@@ -50,10 +50,7 @@ namespace Obj2Tiles
 
             try
             {
-
-                destFolderDecimation = opts.StopAt == Stage.Decimation
-                    ? opts.Output
-                    : createTempFolder($"{pipelineId}-obj2tiles-decimation");
+                destFolderDecimation = createTempFolder($"{pipelineId}-obj2tiles-decimation");
 
                 Console.WriteLine($" => Decimation stage with {opts.LODs} LODs");
                 sw.Start();
@@ -67,17 +64,20 @@ namespace Obj2Tiles
 
                 Console.WriteLine();
                 Console.WriteLine(
-                    $" => Splitting stage with {opts.MaxVerticesPerTile} vertices per tile {(opts.ZSplit ? "and Z-split" : "")}");
+                    $" => Splitting stage with {opts.MaxVerticesPerTile} vertices per tile");
 
-                destFolderSplit = opts.StopAt == Stage.Splitting
-                    ? opts.Output
-                    : createTempFolder($"{pipelineId}-obj2tiles-split");
+                destFolderSplit = createTempFolder($"{pipelineId}-obj2tiles-split");
 
                 var boundsMapper = await StagesFacade.Split(decimateRes.DestFiles, destFolderSplit, opts.MaxVerticesPerTile,
-                    opts.ZSplit, decimateRes.Bounds, opts.PackingThreshold, opts.KeepOriginalTextures);
+                    decimateRes.Bounds, opts.PackingThreshold, opts.KeepOriginalTextures);
 
                 Console.WriteLine(" ?> Splitting stage done in {0}", sw.Elapsed);
-
+                sw.Restart();
+                Console.WriteLine(" ?> Converting to gltf");
+                ConvertFacade.Convert(destFolderSplit, opts.Output, opts.LODs);
+                Console.WriteLine(" ?> Converting done in {0}", sw.Elapsed);
+                sw.Restart();
+                
                 if (opts.StopAt == Stage.Splitting)
                     return;
 
@@ -138,7 +138,6 @@ namespace Obj2Tiles
 
         private static bool CheckOptions(Options opts)
         {
-
             if (string.IsNullOrWhiteSpace(opts.Input))
             {
                 Console.WriteLine(" !> Input file is required");

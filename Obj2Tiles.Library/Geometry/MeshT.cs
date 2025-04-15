@@ -533,8 +533,6 @@ public class MeshT : IMesh
                     newNormalMap.Save(newPathNormalMap);
                     newNormalMap.Dispose();
                 }
-                
-
 
                 newTexture = !(material.Texture == null) ? new Image<Rgba32>(edgeLength, edgeLength) : null;
                 newNormalMap = !(material.NormalMap == null) ? new Image<Rgba32>(edgeLength, edgeLength) : null;
@@ -744,7 +742,7 @@ public class MeshT : IMesh
         _vertexColors.Clear();
         for (var i = 0; i < _vertices.Count; i++)
         {
-            _vertexColors.Add(new RGB(1, 1, 1));
+            _vertexColors.Add(new RGB(0, 0, 0));
         }
 
         clusterInfos.Sort((a, b) => b.cluster.Count.CompareTo(a.cluster.Count));
@@ -946,10 +944,10 @@ public class MeshT : IMesh
                     var vtB = _textureVertices[face.TextureIndexB];
                     var vtC = _textureVertices[face.TextureIndexC];
                     
-                    var colorA = tex[(int)(vtA.X * texWidth), (int)(vtA.Y * texHeight)];
-                    var colorB = tex[(int)(vtB.X * texWidth), (int)(vtB.Y * texHeight)];
-                    var colorC = tex[(int)(vtC.X * texWidth), (int)(vtC.Y * texHeight)];
-
+                    var colorA = tex[(int)(vtA.X * texWidth), (int)((1 - vtA.Y) * texHeight)];
+                    var colorB = tex[(int)(vtB.X * texWidth), (int)((1 - vtB.Y) * texHeight)];
+                    var colorC = tex[(int)(vtC.X * texWidth), (int)((1 - vtC.Y) * texHeight)];
+                    
                     _vertexColors[face.IndexA] = Common.ConvertToRGB(colorA);
                     _vertexColors[face.IndexB] = Common.ConvertToRGB(colorB);
                     _vertexColors[face.IndexC] = Common.ConvertToRGB(colorC);

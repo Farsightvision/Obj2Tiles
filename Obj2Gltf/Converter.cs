@@ -375,9 +375,10 @@ namespace SilentWave.Obj2Gltf
 
             // Vertex attributes are shared by all primitives in the mesh
             var name0 = mesh.Id;
-
+            var hasColors = objModel.Colors.Count > 0;
             var ps = new List<Primitive>(faces.Count * 2);
             var index = 0;
+            
             foreach (var f in faces)
             {
                 var faceName = name0;
@@ -388,7 +389,6 @@ namespace SilentWave.Obj2Gltf
 
                 var hasUvs = f.Triangles.Any(d => d.V1.T > 0);
                 var hasNormals = f.Triangles.Any(d => d.V1.N > 0);
-
                 var materialIndex = GetMaterialIndexOrDefault(gltfModel, objModel, f.MatName);
                 var material = materialIndex < objModel.Materials.Count ? objModel.Materials[materialIndex] : null;
                 var materialHasTexture = material?.DiffuseTextureFile != null;
@@ -399,8 +399,15 @@ namespace SilentWave.Obj2Gltf
 
                 var atts = new Dictionary<string, int>();
                 var indicesAccessorIndex = bufferState.MakeIndicesAccessor(faceName + "_indices");
+                
                 var accessorIndex = bufferState.MakePositionAccessor(faceName + "_positions");
                 atts.Add("POSITION", accessorIndex);
+
+                if (hasColors)
+                {
+                    var colorsAccessorIndex = bufferState.MakeColorsAccessors(faceName + "_colors");
+                    atts.Add("COLOR_0", colorsAccessorIndex);
+                }
 
                 if (hasNormals)
                 {
@@ -435,7 +442,18 @@ namespace SilentWave.Obj2Gltf
                     var v1 = objModel.Vertices[v1Index];
                     var v2 = objModel.Vertices[v2Index];
                     var v3 = objModel.Vertices[v3Index];
-                   
+                    
+                    var c1 = new SVec3();
+                    var c2 = new SVec3();
+                    var c3 = new SVec3();
+                    
+                    if (hasColors)
+                    {
+                        c1 = objModel.Colors[v1Index];
+                        c2 = objModel.Colors[v2Index];
+                        c3 = objModel.Colors[v3Index];
+                    }
+
                     var n1 = new SVec3();
                     var n2 = new SVec3();
                     var n3 = new SVec3();
@@ -471,9 +489,12 @@ namespace SilentWave.Obj2Gltf
                     if (!faceVertexCache.ContainsKey(v1Str))
                     {
                         faceVertexCache.Add(v1Str, faceVertexCount++);
-
                         bufferState.AddPosition(v1);
 
+                        if (hasColors)
+                        {
+                            bufferState.AddColor(c1);
+                        }
                         if (triangle.V1.N > 0) // hasNormals
                         {
                             bufferState.AddNormal(n1);
@@ -492,8 +513,12 @@ namespace SilentWave.Obj2Gltf
                     if (!faceVertexCache.ContainsKey(v2Str))
                     {
                         faceVertexCache.Add(v2Str, faceVertexCount++);
-
                         bufferState.AddPosition(v2);
+                        
+                        if (hasColors)
+                        {
+                            bufferState.AddColor(c2);
+                        }
                         if (triangle.V2.N > 0) // hasNormals
                         {
                             bufferState.AddNormal(n2);
@@ -514,6 +539,10 @@ namespace SilentWave.Obj2Gltf
                         faceVertexCache.Add(v3Str, faceVertexCount++);
 
                         bufferState.AddPosition(v3);
+                        if (hasColors)
+                        {
+                            bufferState.AddColor(c3);
+                        }
                         if (triangle.V3.N > 0) // hasNormals
                         {
                             bufferState.AddNormal(n3);

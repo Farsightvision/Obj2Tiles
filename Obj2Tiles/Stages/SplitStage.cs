@@ -1,6 +1,5 @@
 ﻿using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Text.Json;
 using Obj2Tiles.Library.Geometry;
 
 namespace Obj2Tiles.Stages;
@@ -8,7 +7,7 @@ namespace Obj2Tiles.Stages;
 public static partial class StagesFacade
 {
     public static async Task<Dictionary<string, Box3>[]> Split(string[] sourceFiles, string destFolder, int divisions,
-        bool zsplit, Box3 bounds, double packingThreshold, bool keepOriginalTextures = false)
+        Box3 bounds, double packingThreshold, bool keepOriginalTextures = false)
     {
         var tasks = new List<Task<Dictionary<string, Box3>>>();
         var lod0File = sourceFiles[0];
@@ -24,7 +23,7 @@ public static partial class StagesFacade
             var textureStrategy = keepOriginalTextures ? TexturesStrategy.KeepOriginal :
                 index == 0 ? TexturesStrategy.Repack : TexturesStrategy.RepackCompressed;
 
-            var splitTask = Split(file, dest, tileSize, packingThreshold, zsplit, bounds, textureStrategy);
+            var splitTask = Split(file, dest, tileSize, packingThreshold, bounds, textureStrategy);
 
             tasks.Add(splitTask);
         }
@@ -35,7 +34,7 @@ public static partial class StagesFacade
     }
 
     public static async Task<Dictionary<string, Box3>> Split(string sourcePath, string destPath, double tileSize,
-        double packingThreshold, bool zSplit = false, Box3? bounds = null,
+        double packingThreshold, Box3? bounds = null,
         TexturesStrategy textureStrategy = TexturesStrategy.Repack,
         SplitPointStrategy splitPointStrategy = SplitPointStrategy.VertexBaricenter)
     {
@@ -51,19 +50,6 @@ public static partial class StagesFacade
 
         Console.WriteLine(
             $" ?> Loaded {mesh.VertexCount} vertices, {mesh.FacesCount} faces in {sw.ElapsedMilliseconds}ms");
-
-        // if (divisions == 0)
-        // {
-        //     Console.WriteLine(" -> Skipping split stage, just compressing textures and cleaning up the mesh");
-        //
-        //     if (mesh is MeshT t)
-        //         t.TexturesStrategy = TexturesStrategy.Compress;
-        //     
-        //     mesh.WriteObj(Path.Combine(destPath, $"{mesh.Name}.obj"));
-        //     
-        //     return new Dictionary<string, Box3> { { mesh.Name, mesh.Bounds } };
-        //     
-        // }
                 
         Console.WriteLine($" -> Splitting by TileSize {tileSize}");
 
@@ -71,25 +57,7 @@ public static partial class StagesFacade
 
         sw.Restart();
 
-        int count;
-
-        // if (bounds != null)
-        // {
-            count = await MeshUtils.SplitByTileSizeXY(mesh, bounds, tileSize, meshes);
-        // }
-        // else
-        // {
-        //     Func<IMesh, Vertex3> getSplitPoint = splitPointStrategy switch
-        //     {
-        //         SplitPointStrategy.AbsoluteCenter => m => m.Bounds.Center,
-        //         SplitPointStrategy.VertexBaricenter => m => m.GetVertexBaricenter(),
-        //         _ => throw new ArgumentOutOfRangeException(nameof(splitPointStrategy))
-        //     };
-        //
-        //     count = zSplit
-        //         ? await MeshUtils.RecurseSplitXYZ(mesh, divisions, getSplitPoint, meshes)
-        //         : await MeshUtils.RecurseSplitXY(mesh, divisions, getSplitPoint, meshes);
-        // }
+        var count = await MeshUtils.SplitByTileSizeXY(mesh, bounds, tileSize, meshes);
 
         sw.Stop();
 

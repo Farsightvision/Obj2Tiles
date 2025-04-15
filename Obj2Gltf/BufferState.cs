@@ -32,6 +32,12 @@ namespace SilentWave.Obj2Gltf
         public BufferView PositionsBufferView { get; private set; }
         public int? PositionsBufferViewIndex { get; private set; }
         public Accessor CurrentPositionsAccessor { get; private set; }
+        
+        public BinaryWriter ColorsStream { get; private set; }
+        public GltfBuffer ColorsBuffer { get; private set; }
+        public BufferView ColorsBufferView { get; private set; }
+        public int? ColorsBufferViewIndex { get; private set; }
+        public Accessor CurrentColorsAccessor { get; private set; }
 
         public BinaryWriter NormalsStream { get; private set; }
         public GltfBuffer NormalsBuffer { get; private set; }
@@ -62,6 +68,11 @@ namespace SilentWave.Obj2Gltf
             accessor.Max[0] = position.X > accessor.Max[0] ? position.X : accessor.Max[0];
             accessor.Max[1] = position.Y > accessor.Max[1] ? position.Y : accessor.Max[1];
             accessor.Max[2] = position.Z > accessor.Max[2] ? position.Z : accessor.Max[2];
+        }
+        
+        public void AddColor(SVec3 color)
+        {
+            AddTobuffer(color, ColorsStream, ColorsBuffer, ColorsBufferView, CurrentColorsAccessor);
         }
 
         internal void AddNormal(SVec3 normal)
@@ -158,6 +169,34 @@ namespace SilentWave.Obj2Gltf
                 ByteOffset = PositionsBuffer.ByteLength
             };
             return _model.AddAccessor(CurrentPositionsAccessor);
+        }
+
+        public int MakeColorsAccessors(string name)
+        {
+            if (ColorsBufferView == null)
+            {
+                var colorsFile = _gltfFileNameNoExt + "_Colors.bin";
+                var stream = File.Create(Path.Combine(_gltfFolder, colorsFile));
+                ColorsStream = new BinaryWriter(stream);
+                ColorsBuffer = new GltfBuffer() { Name = "Colors", Uri = colorsFile };
+                ColorsBufferView = new BufferView
+                {
+                    Name = "Colors",
+                    ByteStride = 12,
+                    Buffer = _model.AddBuffer(ColorsBuffer),
+                    Target = BufferViewTarget.ARRAY_BUFFER
+                };
+                ColorsBufferViewIndex = _model.AddBufferView(ColorsBufferView);
+            }
+            CurrentColorsAccessor = new Accessor
+            {
+                Name = name,
+                Type = AccessorType.VEC3,
+                ComponentType = ComponentType.F32,
+                BufferView = ColorsBufferViewIndex.Value,
+                ByteOffset = ColorsBuffer.ByteLength
+            };
+            return _model.AddAccessor(CurrentColorsAccessor);
         }
 
         public int MakeNormalAccessors(string name)
@@ -258,6 +297,7 @@ namespace SilentWave.Obj2Gltf
                 if (disposing)
                 {
                     PositionsStream?.Dispose();
+                    ColorsStream?.Dispose();
                     NormalsStream?.Dispose();
                     UvsStream?.Dispose();
                     IndicesStream?.Dispose();
