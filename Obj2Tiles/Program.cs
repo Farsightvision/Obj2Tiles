@@ -1,49 +1,40 @@
-﻿using System;
-using System.Collections.Concurrent;
-using System.ComponentModel.DataAnnotations;
-using System.Diagnostics;
-using System.Reflection;
+﻿using System.Diagnostics;
 using CommandLine;
-using CommandLine.Text;
-using Obj2Tiles.Library;
-using Obj2Tiles.Library.Geometry;
+using Newtonsoft.Json;
 using Obj2Tiles.Stages;
-using Obj2Tiles.Stages.Model;
 
 namespace Obj2Tiles
 {
     internal class Program
     {
+        private const string DefaultConfigFile = "config.json";
+        
         private static async Task Main(string[] args)
         {
-            var oResult = await Parser.Default.ParseArguments<Options>(args).WithParsedAsync(Run);
+            var parserResult = await Parser.Default.ParseArguments<Options>(args).WithParsedAsync(Run);
 
-            if (oResult.Tag == ParserResultType.NotParsed)
+            if (parserResult.Tag == ParserResultType.NotParsed)
             {
                 Console.WriteLine("Usage: obj2tiles [options]");
             }
         }
 
-        private static async Task Run(Options opts)
+        private static async Task Run(Options options)
         {
             Console.WriteLine();
             Console.WriteLine(" *** OBJ to Tiles ***");
             Console.WriteLine();
 
-            if (!CheckOptions(opts)) return;
+            if (!TryGetConfig(options, out var config))
+                return;
 
-            opts.Output = Path.GetFullPath(opts.Output);
-            opts.Input = Path.GetFullPath(opts.Input);
-
-            Directory.CreateDirectory(opts.Output);
+            Directory.CreateDirectory(config.Output);
 
             var pipelineId = Guid.NewGuid().ToString();
             var sw = new Stopwatch();
             var swg = Stopwatch.StartNew();
 
-            Func<string, string> createTempFolder = opts.UseSystemTempFolder
-                ? s => CreateTempFolder(s, Path.GetTempPath())
-                : s => CreateTempFolder(s, Path.Combine(opts.Output, ".temp"));
+            Func<string, string> createTempFolder = s => CreateTempFolder(s, Path.Combine(config.Output, ".temp"));
 
             string? destFolderDecimation = null;
             string? destFolderSplit = null;
@@ -51,53 +42,26 @@ namespace Obj2Tiles
             try
             {
                 destFolderDecimation = createTempFolder($"{pipelineId}-obj2tiles-decimation");
-
-                Console.WriteLine($" => Decimation stage with {opts.LODs} LODs");
+                Console.WriteLine($" => Decimation stage with {config.LODs.Length} LODs");
                 sw.Start();
-
-                var decimateRes = await StagesFacade.Decimate(opts.Input, destFolderDecimation, opts.LODs);
-
+                var decimateRes = await StagesFacade.Decimate(config.Input, destFolderDecimation, config.LODs);
                 Console.WriteLine(" ?> Decimation stage done in {0}", sw.Elapsed);
-
-                if (opts.StopAt == Stage.Decimation)
-                    return;
-
                 Console.WriteLine();
-                Console.WriteLine(
-                    $" => Splitting stage with {opts.MaxVerticesPerTile} vertices per tile");
 
+                Console.WriteLine($" => Splitting stage with {config.MaxVerticesPerTile} vertices per tile");
                 destFolderSplit = createTempFolder($"{pipelineId}-obj2tiles-split");
-
-                var boundsMapper = await StagesFacade.Split(decimateRes.DestFiles, destFolderSplit, opts.MaxVerticesPerTile,
-                    decimateRes.Bounds, opts.PackingThreshold, opts.KeepOriginalTextures);
+                
+                var boundsMapper = await StagesFacade.Split(decimateRes.DestFiles, destFolderSplit, config.MaxVerticesPerTile,
+                    decimateRes.Bounds, config.PackingThreshold, config.KeepOriginalTextures);
 
                 Console.WriteLine(" ?> Splitting stage done in {0}", sw.Elapsed);
+                Console.WriteLine();
+                
                 sw.Restart();
                 Console.WriteLine(" ?> Converting to gltf");
-                ConvertFacade.Convert(destFolderSplit, opts.Output, opts.LODs);
+                ConvertFacade.Convert(destFolderSplit, config.Output, config.LODs);
                 Console.WriteLine(" ?> Converting done in {0}", sw.Elapsed);
-                sw.Restart();
-                
-                if (opts.StopAt == Stage.Splitting)
-                    return;
-
-                var gpsCoords = opts.Latitude != null && opts.Longitude != null
-                    ? new GpsCoords(opts.Latitude.Value, opts.Longitude.Value, opts.Altitude, opts.Scale, opts.YUpToZUp)
-                    : null;
-
                 Console.WriteLine();
-                Console.WriteLine($" => Tiling stage {(gpsCoords != null ? $"with GPS coords {gpsCoords}" : "")}");
-
-                var baseError = opts.BaseError;
-
-                Console.WriteLine();
-                Console.WriteLine($" => Tiling stage with baseError {baseError}");
-
-                sw.Restart();
-
-                StagesFacade.Tile(destFolderSplit, opts.Output, opts.LODs, opts.BaseError, boundsMapper, gpsCoords);
-
-                Console.WriteLine(" ?> Tiling stage done in {0}", sw.Elapsed);
             }
             catch (Exception ex)
             {
@@ -108,9 +72,9 @@ namespace Obj2Tiles
                 Console.WriteLine();
                 Console.WriteLine(" => Pipeline completed in {0}", swg.Elapsed);
 
-                var tmpFolder = Path.Combine(opts.Output, ".temp");
+                var tmpFolder = Path.Combine(config.Output, ".temp");
 
-                if (opts.KeepIntermediateFiles)
+                if (config.KeepIntermediateFiles)
                 {
                     Console.WriteLine(
                         $" ?> Skipping cleanup, intermediate files are in '{tmpFolder}' with pipeline id '{pipelineId}'");
@@ -119,13 +83,12 @@ namespace Obj2Tiles
                 }
                 else
                 {
-
                     Console.WriteLine(" => Cleaning up");
 
-                    if (destFolderDecimation != null && destFolderDecimation != opts.Output)
+                    if (destFolderDecimation != null && destFolderDecimation != config.Output)
                         Directory.Delete(destFolderDecimation, true);
 
-                    if (destFolderSplit != null && destFolderSplit != opts.Output)
+                    if (destFolderSplit != null && destFolderSplit != config.Output)
                         Directory.Delete(destFolderSplit, true);
 
                     if (Directory.Exists(tmpFolder))
@@ -136,41 +99,36 @@ namespace Obj2Tiles
             }
         }
 
-        private static bool CheckOptions(Options opts)
+        private static bool TryGetConfig(Options options, out AppConfig config)
         {
-            if (string.IsNullOrWhiteSpace(opts.Input))
+            config = null;
+            var configPath = string.IsNullOrEmpty(options.Config) ? DefaultConfigFile : options.Config;
+
+            if (!File.Exists(configPath))
             {
-                Console.WriteLine(" !> Input file is required");
+                Console.WriteLine($"Config file not found: {configPath}");
                 return false;
             }
 
-            if (!File.Exists(opts.Input))
+            using (var reader = File.OpenText(configPath))
+            using (var jsonReader = new JsonTextReader(reader))
             {
-                Console.WriteLine(" !> Input file does not exist");
+                config = JsonSerializer.CreateDefault().Deserialize<AppConfig>(jsonReader);
+            }
+
+            if (config == null)
+            {
+                Console.WriteLine($"Config file error!");
                 return false;
             }
 
-            if (string.IsNullOrWhiteSpace(opts.Output))
-            {
-                Console.WriteLine(" !> Output folder is required");
-                return false;
-            }
+            var input = string.IsNullOrEmpty(options.Input) ? config.Input : options.Input;
+            var output = string.IsNullOrEmpty(options.Output) ? config.Output : options.Output;
 
-            if (opts.LODs < 1)
-            {
-                Console.WriteLine(" !> LODs must be at least 1");
-                return false;
-            }
-
-            if (opts.MaxVerticesPerTile < 0)
-            {
-                Console.WriteLine(" !> Divisions must be non-negative");
-                return false;
-            }
-
+            config.Input = Path.GetFullPath(input);
+            config.Output = Path.GetFullPath(output);
             return true;
         }
-
 
         private static string CreateTempFolder(string folderName, string baseFolder)
         {

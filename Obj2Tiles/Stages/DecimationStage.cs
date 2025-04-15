@@ -9,11 +9,8 @@ namespace Obj2Tiles.Stages;
 
 public static partial class StagesFacade
 {
-    public static async Task<DecimateResult> Decimate(string sourcePath, string destPath, int lods)
+    public static async Task<DecimateResult> Decimate(string sourcePath, string destPath, LodConfig[] lods)
     {
-        
-        var qualities = Enumerable.Range(0, lods - 1).Select(i => 1.0f - ((i + 1) / (float)lods)).ToArray();
-
         var sourceObjMesh = new ObjMesh();
         sourceObjMesh.ReadFile(sourcePath);
         var bounds = sourceObjMesh.Bounds;
@@ -23,33 +20,27 @@ public static partial class StagesFacade
         File.Copy(sourcePath, originalSourceFile, true);
 
         var destFiles = new List<string> { originalSourceFile };
-
         var tasks = new List<Task>();
-        
-        for (var index = 0; index < qualities.Length; index++)
+
+        for (var index = 0; index < lods.Length; index++)
         {
-            var quality = qualities[index];
+            var lod = lods[index];
             var destFile = Path.Combine(destPath, Path.GetFileNameWithoutExtension(sourcePath) + "_" + index + ".obj");
 
             if (File.Exists(destFile))
                 File.Delete(destFile);
 
-            Console.WriteLine(" -> Decimating mesh {0} with quality {1:0.00}", fileName, quality);
-
-            tasks.Add(Task.Run(() => InternalDecimate(sourceObjMesh, destFile, quality)));
-            
+            Console.WriteLine(" -> Decimating mesh {0} with quality {1:0.00}", fileName, lod.Quality);
+            tasks.Add(Task.Run(() => InternalDecimate(sourceObjMesh, destFile, lod.Quality)));
             destFiles.Add(destFile);
         }
 
         await Task.WhenAll(tasks);
         Console.WriteLine(" ?> Decimation done");
-        
         Console.WriteLine(" -> Copying obj dependencies");
         Utils.CopyObjDependencies(sourcePath, destPath);
         Console.WriteLine(" ?> Dependencies copied");
-
         return new DecimateResult { DestFiles = destFiles.ToArray(), Bounds = bounds };
-
     }
 
 
@@ -135,5 +126,4 @@ public static partial class StagesFacade
         Console.WriteLine(" ?> Output: {0} vertices, {1} triangles ({2} reduction; {3:0.0000} sec)",
             destVertices.Length, outputTriangleCount, reduction, timeTaken);
     }
-
 }

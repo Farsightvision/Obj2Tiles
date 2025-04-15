@@ -2,20 +2,20 @@
 
 public static class ConvertFacade
 {
-    public static void Convert(string sourcePath, string destPath, int lods)
+    public static void Convert(string sourcePath, string destPath, LodConfig[] lods)
     {
         var filesToConvert = new List<Tuple<string, string, bool, bool>>();
 
-        for (var lod = 0; lod < lods; lod++)
+        for (var index = 0; index < lods.Length; index++)
         {
-            var files = Directory.GetFiles(Path.Combine(sourcePath, "LOD-" + lod), "*.obj");
+            var lod = lods[index];
+            var files = Directory.GetFiles(Path.Combine(sourcePath, "LOD-" + index), "*.obj");
 
             foreach (var file in files)
             {
-                var outputFolder = Path.Combine(destPath, "LOD-" + lod);
+                var outputFolder = Path.Combine(destPath, "LOD-" + index);
                 Directory.CreateDirectory(outputFolder);
-                var saveUv = lod == 0;
-                filesToConvert.Add(new Tuple<string, string, bool, bool>(file, outputFolder, !saveUv, saveUv));
+                filesToConvert.Add(new Tuple<string, string, bool, bool>(file, outputFolder, lod.SaveVertexColor, lod.SaveUv));
             }
         }
 
