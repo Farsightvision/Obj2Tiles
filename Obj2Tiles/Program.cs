@@ -28,6 +28,11 @@ namespace Obj2Tiles
             if (!TryGetConfig(options, out var config))
                 return;
 
+            if (Directory.Exists(config.Output))
+            {
+                Directory.Delete(config.Output, true);
+            }
+
             Directory.CreateDirectory(config.Output);
 
             var pipelineId = Guid.NewGuid().ToString();
