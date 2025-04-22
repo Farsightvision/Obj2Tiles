@@ -5,6 +5,8 @@
   "PackingThreshold": 0.618,
   "KeepOriginalTextures": false,
   "KeepIntermediateFiles": false,
+  "KtxQuality": 170,
+  "KtxCompressionLevel": 3,
   "LODs": [
     {
       "Quality": 1.0,
