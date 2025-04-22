@@ -25,6 +25,8 @@ namespace SilentWave.Obj2Gltf
                     return "image/jpeg";
                 case ".GIF":
                     return "image/gif";
+                case ".KTX2":
+                    return "image/ktx2";
                 default:
                     throw new ArgumentException("extension not supported");
             }

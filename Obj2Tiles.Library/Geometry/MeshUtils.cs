@@ -7,12 +7,23 @@ namespace Obj2Tiles.Library.Geometry;
 
 public class MeshUtils
 {
-    public static IMesh LoadMesh(string fileName, double packingThreshold, double textureQuality)
+    public static IMesh LoadMesh(
+        string fileName,
+        double packingThreshold,
+        double textureQuality, 
+        byte ktxQuality = 170,
+        byte ktxCompressionLevel = 3)
     {
         return LoadMesh(fileName, packingThreshold, textureQuality, out _);
     }
     
-    public static IMesh LoadMesh(string fileName, double packingThreshold, double textureQuality, out string[] dependencies)
+    public static IMesh LoadMesh(
+        string fileName,
+        double packingThreshold,
+        double textureQuality,
+        out string[] dependencies,
+        byte ktxQuality = 170,
+        byte ktxCompressionLevel = 3)
     {
         using var reader = new StreamReader(fileName);
 
@@ -137,9 +148,9 @@ public class MeshUtils
         }
 
         dependencies = deps.ToArray();
-        
+
         return textureVertices.Count != 0
-            ? new MeshT(vertices, textureVertices, facesT, materials, packingThreshold, textureQuality)
+            ? new MeshT(vertices, textureVertices, facesT, materials, packingThreshold, textureQuality, ktxQuality, ktxCompressionLevel)
             : new Mesh(vertices, faces);
     }
 

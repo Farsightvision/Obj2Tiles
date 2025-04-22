@@ -15,6 +15,8 @@ public class MeshT : IMesh
 {
     private double _packingThreshold;
     private double _textureQuality;
+    private byte _ktxQuality;
+    private byte _ktxCompressionLevel;
     private List<Vertex3> _vertices;
     private List<RGB> _vertexColors;
     private List<Vertex2> _textureVertices;
@@ -33,11 +35,20 @@ public class MeshT : IMesh
 
     public TexturesStrategy TexturesStrategy { get; set; }
 
-    public MeshT(IEnumerable<Vertex3> vertices, IEnumerable<Vertex2> textureVertices,
-        IEnumerable<FaceT> faces, IEnumerable<Material> materials, double packingThreshold, double textureQuality)
+    public MeshT(
+        IEnumerable<Vertex3> vertices,
+        IEnumerable<Vertex2> textureVertices,
+        IEnumerable<FaceT> faces,
+        IEnumerable<Material> materials,
+        double packingThreshold,
+        double textureQuality,
+        byte ktxQuality = 170,
+        byte ktxCompressionLevel = 3)
     {
         _packingThreshold = packingThreshold;
         _textureQuality = textureQuality;
+        _ktxQuality = ktxQuality;
+        _ktxCompressionLevel = ktxCompressionLevel;
         _vertices = [..vertices];
         _textureVertices = [..textureVertices];
         _faces = [..faces];
@@ -195,11 +206,11 @@ public class MeshT : IMesh
         var orderedRightTextureVertices = rightTextureVertices.OrderBy(x => x.Value).Select(x => x.Key);
         var leftMaterials = _materials.Select(mat => (Material)mat.Clone());
 
-        left = new MeshT(orderedLeftVertices, orderedLeftTextureVertices, leftFaces, leftMaterials, _packingThreshold, _textureQuality)
+        left = new MeshT(orderedLeftVertices, orderedLeftTextureVertices, leftFaces, leftMaterials, _packingThreshold, _textureQuality, _ktxQuality, _ktxCompressionLevel)
         {
             Name = $"{Name}-{utils.Axis}L"
         };
-        right = new MeshT(orderedRightVertices, orderedRightTextureVertices, rightFaces, rightMaterials, _packingThreshold, _textureQuality)
+        right = new MeshT(orderedRightVertices, orderedRightTextureVertices, rightFaces, rightMaterials, _packingThreshold, _textureQuality, _ktxQuality, _ktxCompressionLevel)
         {
             Name = $"{Name}-{utils.Axis}R"
         };
@@ -815,10 +826,16 @@ public class MeshT : IMesh
 
         Console.WriteLine($"Packed to {edgeLength} [{Name}] ({totalTextureArea/edgeLength/edgeLength:F2} filled) ({iterations} iterations)");
 
-        string textureFileName = $"{Name}-texture-diffuse-atlas.jpg";
-        string normalFileName = $"{Name}-texture-normal-atlas.jpg";
+        string textureFileName = $"{Name}-texture-diffuse-atlas.png";
+        string normalFileName = $"{Name}-texture-normal-atlas.png";
+        string ktxTextureFileName = $"{Name}-texture-diffuse-atlas.ktx2";
+        string ktxNormalFileName = $"{Name}-texture-normal-atlas.ktx2";
+        
         string pathTexture = Path.Combine(targetFolder, textureFileName);
         string pathNormal = Path.Combine(targetFolder, normalFileName);
+        
+        string ktxPathTexture = Path.Combine(targetFolder, ktxTextureFileName);
+        string ktxPathNormal = Path.Combine(targetFolder, ktxNormalFileName);
 
         var taskTex = new Task(t =>
         {
@@ -839,11 +856,9 @@ public class MeshT : IMesh
             
             switch (TexturesStrategy)
             {
-                case TexturesStrategy.RepackCompressed:
-                    tx.SaveAsJpeg(pathTexture, encoder);
-                    break;
                 case TexturesStrategy.Repack:
                     tx.Save(pathTexture);
+                    BasisuConverter.ConvertPngToKtx2(_ktxQuality, _ktxCompressionLevel, pathTexture, ktxPathTexture);
                     break;
                 default:
                     throw new InvalidOperationException("Unsupported texture strategy for merged atlas.");
@@ -857,11 +872,9 @@ public class MeshT : IMesh
             var tx = t as Image<Rgba32>;
             switch (TexturesStrategy)
             {
-                case TexturesStrategy.RepackCompressed:
-                    tx.SaveAsJpeg(pathNormal, encoder);
-                    break;
                 case TexturesStrategy.Repack:
                     tx.Save(pathNormal);
+                    BasisuConverter.ConvertPngToKtx2(_ktxQuality, _ktxCompressionLevel, pathNormal, ktxPathNormal);
                     break;
                 default:
                     throw new InvalidOperationException("Unsupported texture strategy for merged atlas.");
@@ -883,7 +896,7 @@ public class MeshT : IMesh
         }
 
         var firstMaterial = _materials[clusterInfos[0].materialIndex];
-        var mergedMaterial = new Material($"{Name}-atlas", textureFileName, normalFileName,
+        var mergedMaterial = new Material($"{Name}-atlas", ktxTextureFileName, ktxNormalFileName,
             firstMaterial.AmbientColor, firstMaterial.DiffuseColor, firstMaterial.SpecularColor,
             firstMaterial.SpecularExponent, firstMaterial.Dissolve, firstMaterial.IlluminationModel);
         
@@ -1476,7 +1489,7 @@ public class MeshT : IMesh
                             var folder = Path.GetDirectoryName(path);
 
                             var textureFileName =
-                                $"{Path.GetFileNameWithoutExtension(path)}-texture-{index}.jpg";
+                                $"{Path.GetFileNameWithoutExtension(path)}-texture-{index}{Path.GetExtension(material.Texture)}";
 
                             var newTexturePath =
                                 folder != null ? Path.Combine(folder, textureFileName) : textureFileName;

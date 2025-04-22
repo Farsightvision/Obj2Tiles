@@ -9,6 +9,8 @@ public class AppConfig
     public bool KeepOriginalTextures { get; set; }
     public bool KeepIntermediateFiles { get; set; }
     public LodConfig[] LODs { get; set; }
+    public byte KtxQuality { get; set; }
+    public byte KtxCompressionLevel { get; set; }
 }
 
 public class LodConfig

@@ -6,12 +6,20 @@ namespace Obj2Tiles.Stages;
 
 public static partial class StagesFacade
 {
-    public static async Task<Dictionary<string, Box3>[]> Split(string[] sourceFiles, string destFolder, int divisions,
-        Box3 bounds, double packingThreshold, LodConfig[] lods, bool keepOriginalTextures = false)
+    public static async Task<Dictionary<string, Box3>[]> Split(
+        string[] sourceFiles,
+        string destFolder,
+        int divisions,
+        Box3 bounds,
+        double packingThreshold,
+        LodConfig[] lods,
+        bool keepOriginalTextures = false, 
+        byte ktxQuality = 170,
+        byte ktxCompressionLevel = 3)
     {
         var tasks = new List<Task<Dictionary<string, Box3>>>();
         var lod0File = sourceFiles[0];
-        var mesh = MeshUtils.LoadMesh(lod0File, packingThreshold, lods[0].Quality, out _);
+        var mesh = MeshUtils.LoadMesh(lod0File, packingThreshold, lods[0].Quality, out _, ktxQuality, ktxCompressionLevel);
         var tileSize = await MeshUtils.CalculateOptimalTileSize(mesh, divisions);
 
         for (var index = 0; index < sourceFiles.Length; index++)
@@ -20,8 +28,7 @@ public static partial class StagesFacade
             var dest = Path.Combine(destFolder, "LOD-" + index);
             
             // We compress textures except the first one (the original one)
-            var textureStrategy = keepOriginalTextures ? TexturesStrategy.KeepOriginal :
-                index == 0 ? TexturesStrategy.Repack : TexturesStrategy.RepackCompressed;
+            var textureStrategy = keepOriginalTextures ? TexturesStrategy.KeepOriginal : TexturesStrategy.Repack;
 
             var splitTask = Split(file, dest, tileSize, packingThreshold, lods[index].Quality, bounds, textureStrategy);
 
@@ -36,7 +43,9 @@ public static partial class StagesFacade
     public static async Task<Dictionary<string, Box3>> Split(string sourcePath, string destPath, double tileSize,
         double packingThreshold, double textureQuality, Box3? bounds = null,
         TexturesStrategy textureStrategy = TexturesStrategy.Repack,
-        SplitPointStrategy splitPointStrategy = SplitPointStrategy.VertexBaricenter)
+        SplitPointStrategy splitPointStrategy = SplitPointStrategy.VertexBaricenter,
+        byte ktxQuality = 170,
+        byte ktxCompressionLevel = 3)
     {
         var sw = new Stopwatch();
         var tilesBounds = new Dictionary<string, Box3>();
@@ -46,7 +55,7 @@ public static partial class StagesFacade
         Console.WriteLine($" -> Loading OBJ file \"{sourcePath}\"");
 
         sw.Start();
-        var mesh = MeshUtils.LoadMesh(sourcePath, packingThreshold, textureQuality, out _);
+        var mesh = MeshUtils.LoadMesh(sourcePath, packingThreshold, textureQuality, out _, ktxQuality, ktxCompressionLevel);
 
         Console.WriteLine(
             $" ?> Loaded {mesh.VertexCount} vertices, {mesh.FacesCount} faces in {sw.ElapsedMilliseconds}ms");
