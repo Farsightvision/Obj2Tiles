@@ -11,10 +11,10 @@ public class MeshUtils
         string fileName,
         double packingThreshold,
         double textureQuality, 
-        byte ktxQuality = 170,
-        byte ktxCompressionLevel = 3)
+        byte ktxQuality,
+        byte ktxCompressionLevel)
     {
-        return LoadMesh(fileName, packingThreshold, textureQuality, out _);
+        return LoadMesh(fileName, packingThreshold, textureQuality, out _, ktxQuality, ktxCompressionLevel);
     }
     
     public static IMesh LoadMesh(
@@ -22,8 +22,8 @@ public class MeshUtils
         double packingThreshold,
         double textureQuality,
         out string[] dependencies,
-        byte ktxQuality = 170,
-        byte ktxCompressionLevel = 3)
+        byte ktxQuality,
+        byte ktxCompressionLevel)
     {
         using var reader = new StreamReader(fileName);
 

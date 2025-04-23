@@ -42,8 +42,8 @@ public class MeshT : IMesh
         IEnumerable<Material> materials,
         double packingThreshold,
         double textureQuality,
-        byte ktxQuality = 170,
-        byte ktxCompressionLevel = 3)
+        byte ktxQuality,
+        byte ktxCompressionLevel)
     {
         _packingThreshold = packingThreshold;
         _textureQuality = textureQuality;

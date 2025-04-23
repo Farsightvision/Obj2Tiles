@@ -11,6 +11,7 @@ public class AppConfig
     public LodConfig[] LODs { get; set; }
     public byte KtxQuality { get; set; }
     public byte KtxCompressionLevel { get; set; }
+    public byte ThreadsCount { get; set; }
 }
 
 public class LodConfig

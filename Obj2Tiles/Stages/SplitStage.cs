@@ -13,24 +13,27 @@ public static partial class StagesFacade
         Box3 bounds,
         double packingThreshold,
         LodConfig[] lods,
-        bool keepOriginalTextures = false, 
-        byte ktxQuality = 170,
-        byte ktxCompressionLevel = 3)
+        bool keepOriginalTextures,
+        byte ktxQuality,
+        byte ktxCompressionLevel,
+        byte threadsCount)
     {
         var tasks = new List<Task<Dictionary<string, Box3>>>();
         var lod0File = sourceFiles[0];
-        var mesh = MeshUtils.LoadMesh(lod0File, packingThreshold, lods[0].Quality, out _, ktxQuality, ktxCompressionLevel);
+        var mesh = MeshUtils.LoadMesh(lod0File, packingThreshold, lods[0].Quality, out _, ktxQuality,
+            ktxCompressionLevel);
         var tileSize = await MeshUtils.CalculateOptimalTileSize(mesh, divisions);
 
         for (var index = 0; index < sourceFiles.Length; index++)
         {
             var file = sourceFiles[index];
             var dest = Path.Combine(destFolder, "LOD-" + index);
-            
+
             // We compress textures except the first one (the original one)
             var textureStrategy = keepOriginalTextures ? TexturesStrategy.KeepOriginal : TexturesStrategy.Repack;
 
-            var splitTask = Split(file, dest, tileSize, packingThreshold, lods[index].Quality, bounds, textureStrategy);
+            var splitTask = Split(file, dest, tileSize, packingThreshold, lods[index].Quality, bounds, textureStrategy,
+                SplitPointStrategy.VertexBaricenter, ktxQuality, ktxCompressionLevel, threadsCount);
 
             tasks.Add(splitTask);
         }
@@ -41,25 +44,27 @@ public static partial class StagesFacade
     }
 
     public static async Task<Dictionary<string, Box3>> Split(string sourcePath, string destPath, double tileSize,
-        double packingThreshold, double textureQuality, Box3? bounds = null,
-        TexturesStrategy textureStrategy = TexturesStrategy.Repack,
-        SplitPointStrategy splitPointStrategy = SplitPointStrategy.VertexBaricenter,
-        byte ktxQuality = 170,
-        byte ktxCompressionLevel = 3)
+        double packingThreshold, double textureQuality, Box3? bounds,
+        TexturesStrategy textureStrategy,
+        SplitPointStrategy splitPointStrategy,
+        byte ktxQuality,
+        byte ktxCompressionLevel,
+        byte threadsCount)
     {
         var sw = new Stopwatch();
         var tilesBounds = new Dictionary<string, Box3>();
 
         Directory.CreateDirectory(destPath);
-        
+
         Console.WriteLine($" -> Loading OBJ file \"{sourcePath}\"");
 
         sw.Start();
-        var mesh = MeshUtils.LoadMesh(sourcePath, packingThreshold, textureQuality, out _, ktxQuality, ktxCompressionLevel);
+        var mesh = MeshUtils.LoadMesh(sourcePath, packingThreshold, textureQuality, out _, ktxQuality,
+            ktxCompressionLevel);
 
         Console.WriteLine(
             $" ?> Loaded {mesh.VertexCount} vertices, {mesh.FacesCount} faces in {sw.ElapsedMilliseconds}ms");
-                
+
         Console.WriteLine($" -> Splitting by TileSize {tileSize}");
 
         var meshes = new ConcurrentBag<IMesh>();
@@ -77,16 +82,31 @@ public static partial class StagesFacade
 
         sw.Restart();
 
+        var semaphore = new SemaphoreSlim(threadsCount);
+        var tasks = meshes.Select(async m =>
+        {
+            await semaphore.WaitAsync();
+
+            try
+            {
+                if (m is MeshT t)
+                    t.TexturesStrategy = textureStrategy;
+
+                var path = Path.Combine(destPath, $"{m.Name}.obj");
+                await Task.Run(() => m.WriteObj(path));
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+        }).ToArray();
+
+        await Task.WhenAll(tasks);
+
         var ms = meshes.ToArray();
         for (var index = 0; index < ms.Length; index++)
         {
             var m = ms[index];
-
-            if (m is MeshT t)
-                t.TexturesStrategy = textureStrategy;
-
-            m.WriteObj(Path.Combine(destPath, $"{m.Name}.obj"));
-
             tilesBounds.Add(m.Name, m.Bounds);
         }
 

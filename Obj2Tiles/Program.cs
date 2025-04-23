@@ -58,7 +58,7 @@ namespace Obj2Tiles
                 
                 var boundsMapper = await StagesFacade.Split(decimateRes.DestFiles, destFolderSplit, config.MaxVerticesPerTile,
                     decimateRes.Bounds, config.PackingThreshold, config.LODs, config.KeepOriginalTextures, config.KtxQuality,
-                    config.KtxCompressionLevel);
+                    config.KtxCompressionLevel, config.ThreadsCount);
 
                 Console.WriteLine(" ?> Splitting stage done in {0}", sw.Elapsed);
                 Console.WriteLine();
