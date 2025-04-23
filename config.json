@@ -2,11 +2,11 @@
   "Input": "./obj/odm_textured_model_geo.obj",
   "Output": "./obj_tiles/",
   "MaxVerticesPerTile": 8000,
-  "PackingThreshold": 0.618,
+  "PackingThreshold": 0.618, // Allowed value for prevent texture resizing. 0.1 - no texture resizing, less packed atlas
   "KeepOriginalTextures": false,
   "KeepIntermediateFiles": false,
-  "KtxQuality": 170,
-  "KtxCompressionLevel": 3,
+  "KtxQuality": 170, // ETC1S quality level 1–255
+  "KtxCompressionLevel": 3, // ETC1S compression level 0-5
   "LODs": [
     {
       "Quality": 1.0,
@@ -15,8 +15,8 @@
     },
     {
       "Quality": 0.5,
-      "SaveVertexColor": true,
-      "SaveUv": false
+      "SaveVertexColor": false,
+      "SaveUv": true,
     },
     {
       "Quality": 0.2,
