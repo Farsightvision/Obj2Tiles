@@ -161,11 +161,11 @@ public static class Utils
         var name = Path.GetFileNameWithoutExtension(objPath);
         var converter = Converter.MakeDefault();
         var outputFile = Path.Combine(destPath, $"{name}.gltf");
-        var converterOptions = new GltfConverterOptions { SaveVertexColor = saveColor, SaveUv = saveUv };
+        var converterOptions = new GltfConverterOptions ();
         converter.Convert(objPath, outputFile, converterOptions);
     }
     
-    public static void ConvertGlb(string objPath, string destPath, bool saveColor, bool saveUv)
+    public static void ConvertGlb(string objPath, string destPath)
     {
         var dir = Path.GetDirectoryName(objPath);
         var name = Path.GetFileNameWithoutExtension(objPath);
@@ -173,7 +173,7 @@ public static class Utils
         var gltfConverter = Converter.MakeDefault();
         var gltfOutputFile = dir == null ? $"{name}.gltf" : Path.Combine(dir, $"{name}.gltf");
 
-        var converterOptions = new GltfConverterOptions { SaveVertexColor = saveColor, SaveUv = saveUv };
+        var converterOptions = new GltfConverterOptions();
         gltfConverter.Convert(objPath, gltfOutputFile, converterOptions);
         
         var glbOutputFile = Path.Combine(destPath, $"{name}.glb");

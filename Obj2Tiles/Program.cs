@@ -56,16 +56,25 @@ namespace Obj2Tiles
                 Console.WriteLine($" => Splitting stage with {config.MaxVerticesPerTile} vertices per tile");
                 destFolderSplit = createTempFolder($"{pipelineId}-obj2tiles-split");
                 
-                var boundsMapper = await StagesFacade.Split(decimateRes.DestFiles, destFolderSplit, config.MaxVerticesPerTile,
+                var meshes = await StagesFacade.Split(decimateRes.DestFiles, destFolderSplit, config.MaxVerticesPerTile,
                     decimateRes.Bounds, config.PackingThreshold, config.LODs, config.KeepOriginalTextures, config.KtxQuality,
-                    config.KtxCompressionLevel, config.ThreadsCount);
+                    config.KtxCompressionLevel);
 
                 Console.WriteLine(" ?> Splitting stage done in {0}", sw.Elapsed);
                 Console.WriteLine();
-                
+
+                if (!config.KeepOriginalTextures)
+                {
+                    sw.Restart();
+                    Console.WriteLine(" ?> Compressing png to ktx2");
+                    await StagesFacade.Compress(meshes, config.KtxQuality, config.KtxCompressionLevel);
+                    Console.WriteLine(" ?> Compressing done in {0}", sw.Elapsed);
+                    Console.WriteLine();
+                }
+
                 sw.Restart();
-                Console.WriteLine(" ?> Converting to gltf");
-                ConvertFacade.Convert(destFolderSplit, config.Output, config.LODs);
+                Console.WriteLine(" ?> Converting to glb");
+                StagesFacade.Convert(destFolderSplit, config.Output, config.LODs);
                 Console.WriteLine(" ?> Converting done in {0}", sw.Elapsed);
                 Console.WriteLine();
             }

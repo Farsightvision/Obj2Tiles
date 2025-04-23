@@ -2,7 +2,6 @@
 
 public class FaceT : Face
 {
-
     public int TextureIndexA;
     public int TextureIndexB;
     public int TextureIndexC;
@@ -28,5 +27,10 @@ public class FaceT : Face
     public override string ToObj()
     {
         return $"f {IndexA + 1}/{TextureIndexA + 1} {IndexB + 1}/{TextureIndexB + 1} {IndexC + 1}/{TextureIndexC + 1}";
+    }
+
+    public string ToObj(bool saveUv)
+    {
+        return saveUv ? ToObj() : base.ToObj();
     }
 }

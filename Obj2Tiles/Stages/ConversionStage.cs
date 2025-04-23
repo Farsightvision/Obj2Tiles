@@ -1,10 +1,10 @@
 ﻿namespace Obj2Tiles.Stages;
 
-public static class ConvertFacade
+public static partial class StagesFacade
 {
     public static void Convert(string sourcePath, string destPath, LodConfig[] lods)
     {
-        var filesToConvert = new List<Tuple<string, string, bool, bool>>();
+        var filesToConvert = new List<Tuple<string, string>>();
 
         for (var index = 0; index < lods.Length; index++)
         {
@@ -15,14 +15,14 @@ public static class ConvertFacade
             {
                 var outputFolder = Path.Combine(destPath, "LOD-" + index);
                 Directory.CreateDirectory(outputFolder);
-                filesToConvert.Add(new Tuple<string, string, bool, bool>(file, outputFolder, lod.SaveVertexColor, lod.SaveUv));
+                filesToConvert.Add(new Tuple<string, string>(file, outputFolder));
             }
         }
 
         Parallel.ForEach(filesToConvert, (file) =>
         {
             Console.WriteLine($" -> Converting to Glb '{file.Item1}'");
-            Utils.ConvertGlb(file.Item1, file.Item2, file.Item3, file.Item4);
+            Utils.ConvertGlb(file.Item1, file.Item2);
         });
     }
 }

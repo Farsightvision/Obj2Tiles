@@ -6,7 +6,7 @@ namespace Obj2Tiles.Stages;
 
 public static partial class StagesFacade
 {
-    public static async Task<Dictionary<string, Box3>[]> Split(
+    public static async Task<List<IMesh>> Split(
         string[] sourceFiles,
         string destFolder,
         int divisions,
@@ -15,52 +15,41 @@ public static partial class StagesFacade
         LodConfig[] lods,
         bool keepOriginalTextures,
         byte ktxQuality,
-        byte ktxCompressionLevel,
-        byte threadsCount)
+        byte ktxCompressionLevel)
     {
-        var tasks = new List<Task<Dictionary<string, Box3>>>();
+        var tasks = new List<Task<IMesh[]>>();
         var lod0File = sourceFiles[0];
-        var mesh = MeshUtils.LoadMesh(lod0File, packingThreshold, lods[0].Quality, out _, ktxQuality,
-            ktxCompressionLevel);
+        var mesh = MeshUtils.LoadMesh(lod0File, false, true, packingThreshold, lods[0].Quality, out _);
         var tileSize = await MeshUtils.CalculateOptimalTileSize(mesh, divisions);
 
         for (var index = 0; index < sourceFiles.Length; index++)
         {
+            var lod = lods[index];
             var file = sourceFiles[index];
             var dest = Path.Combine(destFolder, "LOD-" + index);
 
-            // We compress textures except the first one (the original one)
-            var textureStrategy = keepOriginalTextures ? TexturesStrategy.KeepOriginal : TexturesStrategy.Repack;
-
-            var splitTask = Split(file, dest, tileSize, packingThreshold, lods[index].Quality, bounds, textureStrategy,
-                SplitPointStrategy.VertexBaricenter, ktxQuality, ktxCompressionLevel, threadsCount);
+            var splitTask = Split(file, dest, tileSize, packingThreshold, lod, bounds,
+                keepOriginalTextures, SplitPointStrategy.VertexBaricenter);
 
             tasks.Add(splitTask);
         }
 
         await Task.WhenAll(tasks);
-
-        return tasks.Select(task => task.Result).ToArray();
+        return tasks.SelectMany(task => task.Result).ToList();
     }
 
-    public static async Task<Dictionary<string, Box3>> Split(string sourcePath, string destPath, double tileSize,
-        double packingThreshold, double textureQuality, Box3? bounds,
-        TexturesStrategy textureStrategy,
-        SplitPointStrategy splitPointStrategy,
-        byte ktxQuality,
-        byte ktxCompressionLevel,
-        byte threadsCount)
+    public static async Task<IMesh[]> Split(string sourcePath, string destPath, double tileSize,
+        double packingThreshold, LodConfig lod, Box3? bounds,
+        bool keepOriginalTextures, SplitPointStrategy splitPointStrategy)
     {
         var sw = new Stopwatch();
-        var tilesBounds = new Dictionary<string, Box3>();
 
         Directory.CreateDirectory(destPath);
 
         Console.WriteLine($" -> Loading OBJ file \"{sourcePath}\"");
 
         sw.Start();
-        var mesh = MeshUtils.LoadMesh(sourcePath, packingThreshold, textureQuality, out _, ktxQuality,
-            ktxCompressionLevel);
+        var mesh = MeshUtils.LoadMesh(sourcePath, lod.SaveVertexColor, lod.SaveUv, packingThreshold, lod.Quality, out _);
 
         Console.WriteLine(
             $" ?> Loaded {mesh.VertexCount} vertices, {mesh.FacesCount} faces in {sw.ElapsedMilliseconds}ms");
@@ -82,7 +71,7 @@ public static partial class StagesFacade
 
         sw.Restart();
 
-        var semaphore = new SemaphoreSlim(threadsCount);
+        var semaphore = new SemaphoreSlim(8);
         var tasks = meshes.Select(async m =>
         {
             await semaphore.WaitAsync();
@@ -90,7 +79,7 @@ public static partial class StagesFacade
             try
             {
                 if (m is MeshT t)
-                    t.TexturesStrategy = textureStrategy;
+                    t.KeepOriginalTextures = keepOriginalTextures;
 
                 var path = Path.Combine(destPath, $"{m.Name}.obj");
                 await Task.Run(() => m.WriteObj(path));
@@ -102,17 +91,8 @@ public static partial class StagesFacade
         }).ToArray();
 
         await Task.WhenAll(tasks);
-
-        var ms = meshes.ToArray();
-        for (var index = 0; index < ms.Length; index++)
-        {
-            var m = ms[index];
-            tilesBounds.Add(m.Name, m.Bounds);
-        }
-
         Console.WriteLine($" ?> {meshes.Count} tiles written in {sw.ElapsedMilliseconds}ms");
-
-        return tilesBounds;
+        return meshes.ToArray();
     }
 }
 

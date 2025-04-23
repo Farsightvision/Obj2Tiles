@@ -3,7 +3,6 @@ using System.Globalization;
 using Obj2Tiles.Library.Algos;
 using Obj2Tiles.Library.Materials;
 using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats.Jpeg;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
 using Path = System.IO.Path;
@@ -15,8 +14,8 @@ public class MeshT : IMesh
 {
     private double _packingThreshold;
     private double _textureQuality;
-    private byte _ktxQuality;
-    private byte _ktxCompressionLevel;
+    private bool _saveVertexColor;
+    private bool _saveUv;
     private List<Vertex3> _vertices;
     private List<RGB> _vertexColors;
     private List<Vertex2> _textureVertices;
@@ -32,28 +31,28 @@ public class MeshT : IMesh
     private const int MaxAtlasSize = 8192;
 
     public string Name { get; set; } = DefaultName;
-
-    public TexturesStrategy TexturesStrategy { get; set; }
+    public bool KeepOriginalTextures { get; set; } = true;
+    public string FilePath { get; private set; }
 
     public MeshT(
         IEnumerable<Vertex3> vertices,
         IEnumerable<Vertex2> textureVertices,
         IEnumerable<FaceT> faces,
         IEnumerable<Material> materials,
+        bool saveVertexColor,
+        bool saveUv,
         double packingThreshold,
-        double textureQuality,
-        byte ktxQuality,
-        byte ktxCompressionLevel)
+        double textureQuality)
     {
         _packingThreshold = packingThreshold;
         _textureQuality = textureQuality;
-        _ktxQuality = ktxQuality;
-        _ktxCompressionLevel = ktxCompressionLevel;
         _vertices = [..vertices];
         _textureVertices = [..textureVertices];
         _faces = [..faces];
         _materials = [..materials];
         _vertexColors = new List<RGB>();
+        _saveVertexColor = saveVertexColor;
+        _saveUv = saveUv;
     }
 
     public int Split(IVertexUtils utils, double q, out IMesh left,
@@ -206,11 +205,11 @@ public class MeshT : IMesh
         var orderedRightTextureVertices = rightTextureVertices.OrderBy(x => x.Value).Select(x => x.Key);
         var leftMaterials = _materials.Select(mat => (Material)mat.Clone());
 
-        left = new MeshT(orderedLeftVertices, orderedLeftTextureVertices, leftFaces, leftMaterials, _packingThreshold, _textureQuality, _ktxQuality, _ktxCompressionLevel)
+        left = new MeshT(orderedLeftVertices, orderedLeftTextureVertices, leftFaces, leftMaterials, _saveVertexColor, _saveUv, _packingThreshold, _textureQuality)
         {
             Name = $"{Name}-{utils.Axis}L"
         };
-        right = new MeshT(orderedRightVertices, orderedRightTextureVertices, rightFaces, rightMaterials, _packingThreshold, _textureQuality, _ktxQuality, _ktxCompressionLevel)
+        right = new MeshT(orderedRightVertices, orderedRightTextureVertices, rightFaces, rightMaterials, _saveVertexColor, _saveUv, _packingThreshold, _textureQuality)
         {
             Name = $"{Name}-{utils.Axis}R"
         };
@@ -465,8 +464,6 @@ public class MeshT : IMesh
         });
     }
 
-    private static readonly JpegEncoder encoder = new JpegEncoder { Quality = 75 };
-
     private void BinPackTextures(string targetFolder, int materialIndex, IReadOnlyList<List<int>> clusters,
         IDictionary<Vertex2, int> newTextureVertices, ICollection<Task> tasks)
     {
@@ -643,40 +640,20 @@ public class MeshT : IMesh
 
         if (!(material.Texture == null))
         {
-            textureFileName = TexturesStrategy == TexturesStrategy.Repack
-            ? $"{Name}-texture-diffuse-{material.Name}{Path.GetExtension(material.Texture)}"
-            : $"{Name}-texture-diffuse-{material.Name}.jpg";
+            textureFileName = $"{Name}-texture-diffuse-{material.Name}{Path.GetExtension(material.Texture)}";
             newPathTexture = Path.Combine(targetFolder, textureFileName);
         }
 
         if (!(material.NormalMap == null))
         {
-            normalMapFileName = TexturesStrategy == TexturesStrategy.Repack
-            ? $"{Name}-texture-normal-{material.Name}{Path.GetExtension(material.NormalMap)}"
-            : $"{Name}-texture-normal-{material.Name}.jpg";
+            normalMapFileName = $"{Name}-texture-normal-{material.Name}{Path.GetExtension(material.NormalMap)}";
             newPathNormalMap = Path.Combine(targetFolder, normalMapFileName);
         }
 
         var saveTaskTexture = new Task(t =>
         {
             var tx = t as Image<Rgba32>;
-
-            switch (TexturesStrategy)
-            {
-                case TexturesStrategy.RepackCompressed:
-                    tx.SaveAsJpeg(newPathTexture, encoder);
-                    break;
-                case TexturesStrategy.Repack:
-                    tx.Save(newPathTexture);
-                    break;
-                case TexturesStrategy.Compress:
-                case TexturesStrategy.KeepOriginal:
-                    throw new InvalidOperationException(
-                        "KeepOriginal or Compress are meaningless here, we are repacking!");
-                default:
-                    throw new ArgumentOutOfRangeException();
-            }
-
+            tx.Save(newPathTexture);
             Debug.WriteLine("Saved texture to " + newPathTexture);
             tx.Dispose();
         }, newTexture, TaskCreationOptions.LongRunning);
@@ -684,23 +661,7 @@ public class MeshT : IMesh
         var saveTaskNormalMap = new Task(t =>
         {
             var tx = t as Image<Rgba32>;
-
-            switch (TexturesStrategy)
-            {
-                case TexturesStrategy.RepackCompressed:
-                    tx.SaveAsJpeg(newPathNormalMap, encoder);
-                    break;
-                case TexturesStrategy.Repack:
-                    tx.Save(newPathNormalMap);
-                    break;
-                case TexturesStrategy.Compress:
-                case TexturesStrategy.KeepOriginal:
-                    throw new InvalidOperationException(
-                        "KeepOriginal or Compress are meaningless here, we are repacking!");
-                default:
-                    throw new ArgumentOutOfRangeException();
-            }
-
+            tx.Save(newPathNormalMap);
             Debug.WriteLine("Saved texture to " + newNormalMap);
             tx.Dispose();
         }, newNormalMap, TaskCreationOptions.LongRunning);
@@ -752,9 +713,13 @@ public class MeshT : IMesh
             return;
 
         _vertexColors.Clear();
-        for (var i = 0; i < _vertices.Count; i++)
+
+        if (_saveVertexColor)
         {
-            _vertexColors.Add(new RGB(0, 0, 0));
+            for (var i = 0; i < _vertices.Count; i++)
+            {
+                _vertexColors.Add(new RGB(0, 0, 0));
+            }
         }
 
         clusterInfos.Sort((a, b) => b.cluster.Count.CompareTo(a.cluster.Count));
@@ -828,14 +793,9 @@ public class MeshT : IMesh
 
         string textureFileName = $"{Name}-texture-diffuse-atlas.png";
         string normalFileName = $"{Name}-texture-normal-atlas.png";
-        string ktxTextureFileName = $"{Name}-texture-diffuse-atlas.ktx2";
-        string ktxNormalFileName = $"{Name}-texture-normal-atlas.ktx2";
         
         string pathTexture = Path.Combine(targetFolder, textureFileName);
         string pathNormal = Path.Combine(targetFolder, normalFileName);
-        
-        string ktxPathTexture = Path.Combine(targetFolder, ktxTextureFileName);
-        string ktxPathNormal = Path.Combine(targetFolder, ktxNormalFileName);
 
         var taskTex = new Task(t =>
         {
@@ -854,52 +814,36 @@ public class MeshT : IMesh
                 }));
             }
             
-            switch (TexturesStrategy)
-            {
-                case TexturesStrategy.Repack:
-                    tx.Save(pathTexture);
-                    BasisuConverter.ConvertPngToKtx2(_ktxQuality, _ktxCompressionLevel, pathTexture, ktxPathTexture);
-                    break;
-                default:
-                    throw new InvalidOperationException("Unsupported texture strategy for merged atlas.");
-            }
-
+            tx.Save(pathTexture);
             tx.Dispose();
         }, atlasTexture, TaskCreationOptions.LongRunning);
 
         var taskNorm = new Task(t =>
         {
             var tx = t as Image<Rgba32>;
-            switch (TexturesStrategy)
-            {
-                case TexturesStrategy.Repack:
-                    tx.Save(pathNormal);
-                    BasisuConverter.ConvertPngToKtx2(_ktxQuality, _ktxCompressionLevel, pathNormal, ktxPathNormal);
-                    break;
-                default:
-                    throw new InvalidOperationException("Unsupported texture strategy for merged atlas.");
-            }
-
+            tx.Save(pathNormal);
             tx.Dispose();
         }, atlasNormalMap, TaskCreationOptions.LongRunning);
-
+        
+        var firstMaterial = _materials[clusterInfos[0].materialIndex];
+        var mergedMaterial = new Material($"{Name}-material", null, null,
+            firstMaterial.AmbientColor, firstMaterial.DiffuseColor, firstMaterial.SpecularColor,
+            firstMaterial.SpecularExponent, firstMaterial.Dissolve, firstMaterial.IlluminationModel);
+        
         if (atlasTexture != null)
         {
+            mergedMaterial.Texture = textureFileName;
             tasks.Add(taskTex);
             taskTex.Start();
         }
 
         if (atlasNormalMap != null)
         {
+            mergedMaterial.NormalMap = normalFileName;
             tasks.Add(taskNorm);
             taskNorm.Start();
         }
 
-        var firstMaterial = _materials[clusterInfos[0].materialIndex];
-        var mergedMaterial = new Material($"{Name}-atlas", ktxTextureFileName, ktxNormalFileName,
-            firstMaterial.AmbientColor, firstMaterial.DiffuseColor, firstMaterial.SpecularColor,
-            firstMaterial.SpecularExponent, firstMaterial.Dissolve, firstMaterial.IlluminationModel);
-        
         _materials.Clear();
         _materials.Add(mergedMaterial);
 
@@ -962,10 +906,13 @@ public class MeshT : IMesh
                     var colorA = tex[(int)(vtA.X * texWidth), (int)((1 - vtA.Y) * texHeight)];
                     var colorB = tex[(int)(vtB.X * texWidth), (int)((1 - vtB.Y) * texHeight)];
                     var colorC = tex[(int)(vtC.X * texWidth), (int)((1 - vtC.Y) * texHeight)];
-                    
-                    _vertexColors[face.IndexA] = Common.ConvertToRGB(colorA);
-                    _vertexColors[face.IndexB] = Common.ConvertToRGB(colorB);
-                    _vertexColors[face.IndexC] = Common.ConvertToRGB(colorC);
+
+                    if (_saveVertexColor)
+                    {
+                        _vertexColors[face.IndexA] = Common.ConvertToRGB(colorA);
+                        _vertexColors[face.IndexB] = Common.ConvertToRGB(colorB);
+                        _vertexColors[face.IndexC] = Common.ConvertToRGB(colorC);
+                    }
                 }
             }
 
@@ -1284,6 +1231,7 @@ public class MeshT : IMesh
 
     public void WriteObj(string path, bool removeUnused = true)
     {
+        FilePath = path;
         if (_materials.Count == 0 || _textureVertices.Count == 0)
             _WriteObjWithoutTexture(path, removeUnused);
         else
@@ -1388,7 +1336,6 @@ public class MeshT : IMesh
         _materials = newMaterials.Keys.ToList();
     }
 
-
     private void _WriteObjWithTexture(string path, bool removeUnused = true)
     {
         if (removeUnused)
@@ -1398,8 +1345,22 @@ public class MeshT : IMesh
 
         var folderPath = Path.GetDirectoryName(path) ?? string.Empty;
 
-        if (TexturesStrategy == TexturesStrategy.Repack || TexturesStrategy == TexturesStrategy.RepackCompressed)
+        if (!KeepOriginalTextures)
             TrimTextures(folderPath);
+
+        if (!_saveUv)
+        {
+            var material = _materials[0];
+            var newMaterial = new Material($"{Name}-material", null, null,
+                material.AmbientColor, material.DiffuseColor, material.SpecularColor,
+                material.SpecularExponent, material.Dissolve, material.IlluminationModel);
+            
+            _materials.Clear();
+            _materials.Add(newMaterial);
+            
+            for (int i = 0; i < _faces.Count; i++)
+                _faces[i].MaterialIndex = 0;
+        }
 
         using (var writer = new FormattingStreamWriter(path, CultureInfo.InvariantCulture))
         {
@@ -1419,7 +1380,7 @@ public class MeshT : IMesh
                 writer.Write(" ");
                 writer.Write(vertex.Z);
 
-                if (_vertexColors.Count > i)
+                if (_saveVertexColor)
                 {
                     var vertexColor = _vertexColors[i];
                     writer.Write(" ");
@@ -1433,12 +1394,15 @@ public class MeshT : IMesh
                 writer.WriteLine();
             }
 
-            foreach (var textureVertex in _textureVertices)
+            if (_saveUv)
             {
-                writer.Write("vt ");
-                writer.Write(textureVertex.X);
-                writer.Write(" ");
-                writer.WriteLine(textureVertex.Y);
+                foreach (var textureVertex in _textureVertices)
+                {
+                    writer.Write("vt ");
+                    writer.Write(textureVertex.X);
+                    writer.Write(" ");
+                    writer.WriteLine(textureVertex.Y);
+                }
             }
 
             var materialFaces = from face in _faces
@@ -1452,63 +1416,37 @@ public class MeshT : IMesh
                 writer.WriteLine($"usemtl {_materials[grp.Key].Name}");
 
                 foreach (var face in grp)
-                    writer.WriteLine(face.ToObj());
+                    writer.WriteLine(face.ToObj(_saveUv));
             }
         }
+        
+        WriteMaterial();
+    }
 
-        var mtlFilePath = Path.ChangeExtension(path, "mtl");
-
-        using (var writer = new FormattingStreamWriter(mtlFilePath, CultureInfo.InvariantCulture))
+    public void WriteMaterial()
+    {
+        var path = Path.ChangeExtension(FilePath, "mtl");;
+        
+        using (var writer = new FormattingStreamWriter(path, CultureInfo.InvariantCulture))
         {
             for (var index = 0; index < _materials.Count; index++)
             {
                 var material = _materials[index];
 
-                if (material.Texture != null)
+                if (KeepOriginalTextures && material.Texture != null)
                 {
-                    switch (TexturesStrategy)
-                    {
-                        case TexturesStrategy.KeepOriginal:
-                        {
-                            var folder = Path.GetDirectoryName(path);
+                    var folder = Path.GetDirectoryName(path);
 
-                            var textureFileName =
-                                $"{Path.GetFileNameWithoutExtension(path)}-texture-{index}{Path.GetExtension(material.Texture)}";
+                    var textureFileName =
+                        $"{Path.GetFileNameWithoutExtension(path)}-texture-{index}{Path.GetExtension(material.Texture)}";
 
-                            var newTexturePath =
-                                folder != null ? Path.Combine(folder, textureFileName) : textureFileName;
+                    var newTexturePath =
+                        folder != null ? Path.Combine(folder, textureFileName) : textureFileName;
 
-                            if (!File.Exists(newTexturePath))
-                                File.Copy(material.Texture, newTexturePath, true);
+                    if (!File.Exists(newTexturePath))
+                        File.Copy(material.Texture, newTexturePath, true);
 
-                            material.Texture = textureFileName;
-                            break;
-                        }
-                        case TexturesStrategy.Compress:
-                        {
-                            var folder = Path.GetDirectoryName(path);
-
-                            var textureFileName =
-                                $"{Path.GetFileNameWithoutExtension(path)}-texture-{index}{Path.GetExtension(material.Texture)}";
-
-                            var newTexturePath =
-                                folder != null ? Path.Combine(folder, textureFileName) : textureFileName;
-
-                            if (File.Exists(newTexturePath))
-
-                                File.Delete(newTexturePath);
-
-                            Console.WriteLine($" -> Compressing texture '{material.Texture}'");
-
-                            using (var image = Image.Load(material.Texture))
-                            {
-                                image.SaveAsJpeg(newTexturePath, encoder);
-                            }
-
-                            material.Texture = textureFileName;
-                            break;
-                        }
-                    }
+                    material.Texture = textureFileName;
                 }
 
                 writer.WriteLine(material.ToMtl());
@@ -1548,12 +1486,4 @@ public class MeshT : IMesh
     public int VertexCount => _vertices.Count;
 
     #endregion
-}
-
-public enum TexturesStrategy
-{
-    KeepOriginal,
-    Compress,
-    Repack,
-    RepackCompressed
 }

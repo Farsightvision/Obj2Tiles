@@ -7,7 +7,6 @@
   "KeepIntermediateFiles": false,
   "KtxQuality": 170, // ETC1S quality level 1–255
   "KtxCompressionLevel": 3, // ETC1S compression level 0-5
-  "ThreadsCount": 8,
   "LODs": [
     {
       "Quality": 1.0,

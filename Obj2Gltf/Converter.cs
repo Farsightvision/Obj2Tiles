@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Text;
 using System.Linq;
 using SilentWave.Obj2Gltf.WaveFront;
 using System.IO;
@@ -77,7 +76,7 @@ namespace SilentWave.Obj2Gltf
             using (var bufferState = new BufferState(gltfModel, outputFile, u32IndicesEnabled))
             {
                 gltfModel.Scenes.Add(new Scene());
-                var materials = objModel.Materials.Select(x => ConvertMaterial(x, t => GetTextureIndex(gltfModel, t), options.SaveUv));
+                var materials = objModel.Materials.Select(x => ConvertMaterial(x, t => GetTextureIndex(gltfModel, t)));
                 gltfModel.Materials.AddRange(materials);
 
                 var meshes = objModel.Geometries.ToArray();
@@ -252,7 +251,7 @@ namespace SilentWave.Obj2Gltf
             return AddTexture(gltfModel, path);
         }
 
-        public static Gltf.Material ConvertMaterial(WaveFront.Material mat, GetOrAddTexture getOrAddTextureFunction, bool saveDiffuseTexture)
+        public static Gltf.Material ConvertMaterial(WaveFront.Material mat, GetOrAddTexture getOrAddTextureFunction)
         {
             var roughnessFactor = ConvertTraditional2MetallicRoughness(mat);
 
@@ -287,7 +286,7 @@ namespace SilentWave.Obj2Gltf
             }
 
 
-            var hasTexture = saveDiffuseTexture && !string.IsNullOrEmpty(mat.DiffuseTextureFile);
+            var hasTexture = !string.IsNullOrEmpty(mat.DiffuseTextureFile);
             if (hasTexture)
             {
                 var index = getOrAddTextureFunction(mat.DiffuseTextureFile);
@@ -378,7 +377,7 @@ namespace SilentWave.Obj2Gltf
 
             // Vertex attributes are shared by all primitives in the mesh
             var name0 = mesh.Id;
-            var hasColors = options.SaveVertexColor && objModel.Colors.Count > 0;
+            var hasColors = objModel.Colors.Count > 0;
             var ps = new List<Primitive>(faces.Count * 2);
             var index = 0;
             
@@ -390,11 +389,11 @@ namespace SilentWave.Obj2Gltf
                     faceName = $"{name0}_{index}";
                 }
 
-                var hasUvs = options.SaveUv && f.Triangles.Any(d => d.V1.T > 0);
+                var hasUvs = f.Triangles.Any(d => d.V1.T > 0);
                 var hasNormals = f.Triangles.Any(d => d.V1.N > 0);
-                var materialIndex = GetMaterialIndexOrDefault(gltfModel, objModel, f.MatName, options.SaveUv);
+                var materialIndex = GetMaterialIndexOrDefault(gltfModel, objModel, f.MatName);
                 var material = materialIndex < objModel.Materials.Count ? objModel.Materials[materialIndex] : null;
-                var materialHasTexture = options.SaveUv && material?.DiffuseTextureFile != null;
+                var materialHasTexture = hasUvs && material?.DiffuseTextureFile != null;
 
                 // every primitive needs their own vertex indices(v,t,n)
                 var faceVertexCache = new Dictionary<string, int>();
@@ -601,7 +600,7 @@ namespace SilentWave.Obj2Gltf
             return ps;
         }
 
-        private int GetMaterialIndexOrDefault(GltfModel gltfModel, ObjModel objModel, string materialName, bool saveDiffuseTexture)
+        private int GetMaterialIndexOrDefault(GltfModel gltfModel, ObjModel objModel, string materialName)
         {
             if (string.IsNullOrEmpty(materialName)) materialName = "default";
 
@@ -627,7 +626,7 @@ namespace SilentWave.Obj2Gltf
                 }
                 else
                 {
-                    var gMat = ConvertMaterial(objMaterial, t => GetTextureIndex(gltfModel, t), saveDiffuseTexture);
+                    var gMat = ConvertMaterial(objMaterial, t => GetTextureIndex(gltfModel, t));
                     materialIndex = AddMaterial(gltfModel, gMat);
                 }
             }
