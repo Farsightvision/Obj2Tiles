@@ -14,7 +14,7 @@ public static partial class StagesFacade
         double packingThreshold,
         LodConfig[] lodConfigs,
         bool keepOriginalTextures,
-        byte threadsCount)
+        int threadsCount)
     {
         var tasks = new List<Task<(LodConfig, IMesh[])>>();
         var lod0File = sourceFiles[0];

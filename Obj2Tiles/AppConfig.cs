@@ -9,7 +9,7 @@ public class AppConfig
     public bool KeepOriginalTextures { get; set; }
     public bool KeepIntermediateFiles { get; set; }
     public LodConfig[] LODs { get; set; }
-    public byte ThreadsCount { get; set; }
+    public int ThreadsCount { get; set; }
 }
 
 public class LodConfig

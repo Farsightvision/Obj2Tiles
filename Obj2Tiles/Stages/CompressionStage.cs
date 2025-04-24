@@ -4,7 +4,7 @@ namespace Obj2Tiles.Stages;
 
 public static partial class StagesFacade
 {
-    public static async Task Compress(Dictionary<LodConfig, IMesh[]> meshes, byte threadsCount)
+    public static async Task Compress(Dictionary<LodConfig, IMesh[]> meshes, int threadsCount)
     {
         var semaphore = new SemaphoreSlim(threadsCount);
         var tasks = new List<Task>();
@@ -64,3 +64,5 @@ public static partial class StagesFacade
         }
     }
 }
+
+//./Obj2Tiles --input ./factory/odm_textured_model_geo.obj --output ./obj_tiles/ --lods '[{"Quality":1.0,"SaveVertexColor":false,"SaveUv":true,"KtxQuality":170,"KtxCompressionLevel":0},{"Quality":0.5,"SaveVertexColor":false,"SaveUv":true,"KtxQuality":128,"KtxCompressionLevel":0},{"Quality":0.2,"SaveVertexColor":true,"SaveUv":false,"KtxQuality":128,"KtxCompressionLevel":0}]'

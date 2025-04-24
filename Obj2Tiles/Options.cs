@@ -47,7 +47,7 @@ public sealed class Options
     public bool KeepIntermediateFiles { get; set; }
     
     [Option("threads", Required = false, HelpText = "Count threads for parallel ktx compression", Default = 8)]
-    public byte ThreadsCount { get; set; }
+    public int ThreadsCount { get; set; }
     
     [Option('l', "lods", Required = false, HelpText = "Lod's json")]
     public string LODs { get; set; }
