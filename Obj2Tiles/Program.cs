@@ -58,7 +58,7 @@ namespace Obj2Tiles
                 
                 var meshes = await StagesFacade.Split(decimateRes.DestFiles, destFolderSplit, config.MaxVerticesPerTile,
                     decimateRes.Bounds, config.PackingThreshold, config.LODs, config.KeepOriginalTextures, config.KtxQuality,
-                    config.KtxCompressionLevel);
+                    config.KtxCompressionLevel, config.ThreadsCount);
 
                 Console.WriteLine(" ?> Splitting stage done in {0}", sw.Elapsed);
                 Console.WriteLine();
@@ -67,7 +67,7 @@ namespace Obj2Tiles
                 {
                     sw.Restart();
                     Console.WriteLine(" ?> Compressing png to ktx2");
-                    await StagesFacade.Compress(meshes, config.KtxQuality, config.KtxCompressionLevel);
+                    await StagesFacade.Compress(meshes, config.KtxQuality, config.KtxCompressionLevel, config.ThreadsCount);
                     Console.WriteLine(" ?> Compressing done in {0}", sw.Elapsed);
                     Console.WriteLine();
                 }

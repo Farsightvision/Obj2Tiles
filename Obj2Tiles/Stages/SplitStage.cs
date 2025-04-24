@@ -15,13 +15,15 @@ public static partial class StagesFacade
         LodConfig[] lods,
         bool keepOriginalTextures,
         byte ktxQuality,
-        byte ktxCompressionLevel)
+        byte ktxCompressionLevel,
+        byte threadsCount)
     {
         var tasks = new List<Task<IMesh[]>>();
         var lod0File = sourceFiles[0];
         var mesh = MeshUtils.LoadMesh(lod0File, false, true, packingThreshold, lods[0].Quality, out _);
         var tileSize = await MeshUtils.CalculateOptimalTileSize(mesh, divisions);
-
+        var semaphore = new SemaphoreSlim(threadsCount);
+        
         for (var index = 0; index < sourceFiles.Length; index++)
         {
             var lod = lods[index];
@@ -29,7 +31,7 @@ public static partial class StagesFacade
             var dest = Path.Combine(destFolder, "LOD-" + index);
 
             var splitTask = Split(file, dest, tileSize, packingThreshold, lod, bounds,
-                keepOriginalTextures, SplitPointStrategy.VertexBaricenter);
+                keepOriginalTextures, semaphore, SplitPointStrategy.VertexBaricenter);
 
             tasks.Add(splitTask);
         }
@@ -40,7 +42,7 @@ public static partial class StagesFacade
 
     public static async Task<IMesh[]> Split(string sourcePath, string destPath, double tileSize,
         double packingThreshold, LodConfig lod, Box3? bounds,
-        bool keepOriginalTextures, SplitPointStrategy splitPointStrategy)
+        bool keepOriginalTextures, SemaphoreSlim semaphore, SplitPointStrategy splitPointStrategy)
     {
         var sw = new Stopwatch();
 
@@ -71,7 +73,6 @@ public static partial class StagesFacade
 
         sw.Restart();
 
-        var semaphore = new SemaphoreSlim(8);
         var tasks = meshes.Select(async m =>
         {
             await semaphore.WaitAsync();
