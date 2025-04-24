@@ -150,6 +150,8 @@ namespace Obj2Tiles
                 MaxVerticesPerTile = options.MaxVerticesPerTile,
                 PackingThreshold = options.PackingThreshold,
                 ThreadsCount = options.ThreadsCount,
+                KeepOriginalTextures = options.KeepOriginalTextures,
+                KeepIntermediateFiles = options.KeepIntermediateFiles,
                 LODs = JsonConvert.DeserializeObject<LodConfig[]>(options.LODs)
             };
             
