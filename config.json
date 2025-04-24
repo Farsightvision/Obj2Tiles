@@ -5,23 +5,28 @@
   "PackingThreshold": 0.618, // Allowed value for prevent texture resizing. 0.1 - no texture resizing, less packed atlas
   "KeepOriginalTextures": false,
   "KeepIntermediateFiles": false,
-  "KtxQuality": 170, // ETC1S quality level 1–255
-  "KtxCompressionLevel": 3, // ETC1S compression level 0-5
+  "ThreadsCount": 8,
   "LODs": [
     {
       "Quality": 1.0,
       "SaveVertexColor": false,
-      "SaveUv": true
+      "SaveUv": true,
+      "KtxQuality": 170, // ETC1S quality level 1–255
+      "KtxCompressionLevel": 3 // ETC1S compression level 0-5
     },
     {
       "Quality": 0.5,
-      "SaveVertexColor": false,
-      "SaveUv": true,
+      "SaveVertexColor": true,
+      "SaveUv": false,
+      "KtxQuality": 128,
+      "KtxCompressionLevel": 0
     },
     {
       "Quality": 0.2,
       "SaveVertexColor": true,
-      "SaveUv": false
+      "SaveUv": false,
+      "KtxQuality": 128,
+      "KtxCompressionLevel": 0
     }
   ]
 }

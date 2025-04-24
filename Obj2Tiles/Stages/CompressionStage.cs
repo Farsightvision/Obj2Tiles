@@ -4,22 +4,26 @@ namespace Obj2Tiles.Stages;
 
 public static partial class StagesFacade
 {
-    public static async Task Compress(List<IMesh> meshes, byte ktxQuality, byte ktxCompressionLevel, byte threadsCount)
+    public static async Task Compress(Dictionary<LodConfig, IMesh[]> meshes, byte threadsCount)
     {
         var semaphore = new SemaphoreSlim(threadsCount);
         var tasks = new List<Task>();
-        for (var i = 0; i < meshes.Count; i++)
-        {
-            var mesh = meshes[i];
 
-            if (mesh is MeshT meshT && meshT.Materials.Count > 0)
-                tasks.Add(Compress(meshT, ktxQuality, ktxCompressionLevel, semaphore));
+        foreach (var lodMeshPair in meshes)
+        {
+            for (var i = 0; i < lodMeshPair.Value.Length; i++)
+            {
+                var mesh = lodMeshPair.Value[i];
+
+                if (mesh is MeshT meshT && meshT.Materials.Count > 0)
+                    tasks.Add(Compress(meshT, lodMeshPair.Key, semaphore));
+            }
         }
 
         await Task.WhenAll(tasks);
     }
 
-    private static async Task Compress(MeshT meshT, byte ktxQuality, byte ktxCompressionLevel, SemaphoreSlim semaphore)
+    private static async Task Compress(MeshT meshT, LodConfig lodConfig, SemaphoreSlim semaphore)
     {
         await semaphore.WaitAsync();
 
@@ -39,7 +43,7 @@ public static partial class StagesFacade
                 var pathKtxTexture = Path.Combine(targetFolder, ktxTexture);
                 material.Texture = ktxTexture;
                 meshT.WriteMaterial();
-                await BasisuConverter.ConvertPngToKtx2Async(ktxQuality, ktxCompressionLevel, pathTexture, pathKtxTexture);
+                await BasisuConverter.ConvertPngToKtx2Async(lodConfig.KtxQuality, lodConfig.KtxCompressionLevel, pathTexture, pathKtxTexture);
             }
 
             if (!string.IsNullOrEmpty(material.NormalMap))
@@ -49,7 +53,7 @@ public static partial class StagesFacade
                 var pathKtxNormalMap = Path.Combine(targetFolder, ktxNormalMap);
                 material.NormalMap = ktxNormalMap;
                 meshT.WriteMaterial();
-                await BasisuConverter.ConvertPngToKtx2Async(ktxQuality, ktxCompressionLevel, pathNormalMap, pathKtxNormalMap);
+                await BasisuConverter.ConvertPngToKtx2Async(lodConfig.KtxQuality, lodConfig.KtxCompressionLevel, pathNormalMap, pathKtxNormalMap);
             }
         
             meshT.WriteMaterial();

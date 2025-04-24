@@ -9,8 +9,6 @@ public class AppConfig
     public bool KeepOriginalTextures { get; set; }
     public bool KeepIntermediateFiles { get; set; }
     public LodConfig[] LODs { get; set; }
-    public byte KtxQuality { get; set; }
-    public byte KtxCompressionLevel { get; set; }
     public byte ThreadsCount { get; set; }
 }
 
@@ -19,4 +17,6 @@ public class LodConfig
     public float Quality { get; set; }
     public bool SaveVertexColor { get; set; }
     public bool SaveUv { get; set; }
+    public byte KtxQuality { get; set; }
+    public byte KtxCompressionLevel { get; set; }
 }
