@@ -1361,7 +1361,7 @@ public class MeshT : IMesh
             for (int i = 0; i < _faces.Count; i++)
                 _faces[i].MaterialIndex = 0;
         }
-
+        
         using (var writer = new FormattingStreamWriter(path, CultureInfo.InvariantCulture))
         {
             writer.Write("o ");
@@ -1380,7 +1380,7 @@ public class MeshT : IMesh
                 writer.Write(" ");
                 writer.Write(vertex.Z);
 
-                if (_saveVertexColor)
+                if (_saveVertexColor && _vertexColors.Count > 0)
                 {
                     var vertexColor = _vertexColors[i];
                     writer.Write(" ");
@@ -1409,7 +1409,7 @@ public class MeshT : IMesh
                 group face by face.MaterialIndex
                 into g
                 select g;
-
+            
             // NOTE: If there are groups of faces without materials, they must be placed at the beginning
             foreach (var grp in materialFaces.OrderBy(item => item.Key))
             {

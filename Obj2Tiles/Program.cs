@@ -7,8 +7,6 @@ namespace Obj2Tiles
 {
     internal class Program
     {
-        private const string DefaultConfigFile = "config.json";
-        
         private static async Task Main(string[] args)
         {
             var parserResult = await Parser.Default.ParseArguments<Options>(args).WithParsedAsync(Run);
@@ -27,6 +25,9 @@ namespace Obj2Tiles
 
             if (!TryGetConfig(options, out var config))
                 return;
+            
+            Console.WriteLine(JsonConvert.SerializeObject(config));
+            Console.WriteLine();
 
             if (Directory.Exists(config.Output))
             {
@@ -118,31 +119,40 @@ namespace Obj2Tiles
         private static bool TryGetConfig(Options options, out AppConfig config)
         {
             config = null;
-            var configPath = string.IsNullOrEmpty(options.Config) ? DefaultConfigFile : options.Config;
 
-            if (!File.Exists(configPath))
+            if (!string.IsNullOrEmpty(options.Config))
             {
-                Console.WriteLine($"Config file not found: {configPath}");
+                using (var reader = File.OpenText(options.Config))
+                using (var jsonReader = new JsonTextReader(reader))
+                {
+                    config = JsonSerializer.CreateDefault().Deserialize<AppConfig>(jsonReader);
+                }
+
+                return true;
+            }
+
+            if (string.IsNullOrEmpty(options.Input))
+            {
+                Console.WriteLine("Input parameter missing!");
+                return false;
+            }
+            
+            if (string.IsNullOrEmpty(options.Output))
+            {
+                Console.WriteLine("Output parameter missing!");
                 return false;
             }
 
-            using (var reader = File.OpenText(configPath))
-            using (var jsonReader = new JsonTextReader(reader))
+            config = new AppConfig
             {
-                config = JsonSerializer.CreateDefault().Deserialize<AppConfig>(jsonReader);
-            }
-
-            if (config == null)
-            {
-                Console.WriteLine($"Config file error!");
-                return false;
-            }
-
-            var input = string.IsNullOrEmpty(options.Input) ? config.Input : options.Input;
-            var output = string.IsNullOrEmpty(options.Output) ? config.Output : options.Output;
-
-            config.Input = Path.GetFullPath(input);
-            config.Output = Path.GetFullPath(output);
+                Input = options.Input,
+                Output = options.Output,
+                MaxVerticesPerTile = options.MaxVerticesPerTile,
+                PackingThreshold = options.PackingThreshold,
+                ThreadsCount = options.ThreadsCount,
+                LODs = JsonConvert.DeserializeObject<LodConfig[]>(options.LODs)
+            };
+            
             return true;
         }
 
