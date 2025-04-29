@@ -8,9 +8,6 @@ public static class BasisuConverter
     public static async Task ConvertPngToKtx2Async(byte quality, byte compression, string pngPath,
         string outputKtx2Path)
     {
-        if (!File.Exists(ExecutablePath))
-            throw new FileNotFoundException("basisu executable not found", ExecutablePath);
-
         if (!File.Exists(pngPath))
             throw new FileNotFoundException("Input PNG not found", pngPath);
 
