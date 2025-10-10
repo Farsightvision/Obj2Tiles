@@ -56,7 +56,7 @@ namespace Obj2Tiles
                 Console.WriteLine($" => Splitting stage with {config.MaxVerticesPerTile} vertices per tile");
                 destFolderSplit = CreateTempFolder($"{pipelineId}-obj2tiles-split", tempFolder);
                 
-                var meshes = await StagesFacade.Split(decimateRes.DestFiles, destFolderSplit,
+                var meshes = StagesFacade.Split(decimateRes.DestFiles, destFolderSplit,
                     config.MaxVerticesPerTile, decimateRes.Bounds, config.PackingThreshold, config.LODs, config.ThreadsCount);
 
                 Console.WriteLine(" ?> Splitting stage done in {0}", sw.Elapsed);
