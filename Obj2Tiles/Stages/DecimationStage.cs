@@ -16,7 +16,6 @@ public static partial class StagesFacade
         var bounds = sourceObjMesh.Bounds;
         var fileName = Path.GetFileName(sourcePath);
         var destFiles = new List<string>();
-        var tasks = new List<Task>();
 
         for (var index = 0; index < lods.Length; index++)
         {
@@ -35,12 +34,10 @@ public static partial class StagesFacade
             else
             {
                 Console.WriteLine(" -> Decimating mesh {0} with quality {1:0.00}", fileName, lod.Quality);
-                tasks.Add(Task.Run(() => InternalDecimate(sourceObjMesh, destFile, lod.Quality)));
+                await Task.Run(() => InternalDecimate(sourceObjMesh, destFile, lod.Quality));
                 destFiles.Add(destFile);
             }
         }
-
-        await Task.WhenAll(tasks);
         Console.WriteLine(" ?> Decimation done");
         Console.WriteLine(" -> Copying obj dependencies");
         Utils.CopyObjDependencies(sourcePath, destPath);
