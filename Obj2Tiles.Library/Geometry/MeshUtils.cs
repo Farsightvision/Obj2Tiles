@@ -145,8 +145,8 @@ public class MeshUtils
 
     #region Splitters
 
-    private static readonly IVertexUtils yutils3 = new VertexUtilsY();
     private static readonly IVertexUtils xutils3 = new VertexUtilsX();
+    private static readonly IVertexUtils yutils3 = new VertexUtilsY();
     private static readonly IVertexUtils zutils3 = new VertexUtilsZ();
 
     public static async Task<int> RecurseSplitXY(IMesh mesh, int depth, Box3 bounds, ConcurrentBag<IMesh> meshes)
@@ -318,25 +318,22 @@ public class MeshUtils
         return count + tasks.Sum(t => t.Result);
     }
 
-    public static async Task<double> CalculateOptimalTileSize(IMesh mesh, int optimalVertices)
+    public static double CalculateOptimalTileSize(IMesh mesh, int optimalVertices)
     {
-        var meshes = new ConcurrentBag<IMesh>();
-        await RecurseSplitXY(mesh, 3, mesh.Bounds, meshes);
-        var biggestMeshes = meshes.OrderByDescending(m => m.VertexCount).Take(3).ToArray();
-        var biggestMesh = biggestMeshes[0];
-        var averageVertexCount = biggestMeshes.Average(m => m.VertexCount);
-        var vertexDensity = averageVertexCount / (biggestMesh.Bounds.Width * biggestMesh.Bounds.Height);
-        var tileSize = Math.Sqrt(optimalVertices / vertexDensity);
+        var bounds = mesh.Bounds;
+        var volume = bounds.Width * bounds.Height * bounds.Depth;
+        var vertexDensity = mesh.VertexCount / volume;
+        var tileSize = Math.Pow(optimalVertices / vertexDensity, 1.0 / 3.0);
         return tileSize;
     }
     
-    public static async Task<int> SplitByTileSizeXY (IMesh mesh, Box3 bounds, double tileSize, ConcurrentBag<IMesh> meshes)
+    public static async Task<int> SplitByTileSizeXYZ(IMesh mesh, Box3 bounds, double tileSize, ConcurrentBag<IMesh> meshes)
     {
         var xMin = bounds.Min.X;
         var xMax = bounds.Max.X;
-        var cols = new List<IMesh>();
+        var xSlices = new List<(IMesh mesh, int xIndex)>();
         var currentMesh = mesh;
-        var colNumber = 1;
+        var xIndex = 0;
 
         for (double x = xMin + tileSize; x < xMax; x += tileSize)
         {
@@ -344,76 +341,85 @@ public class MeshUtils
 
             if (left.FacesCount > 0)
             {
-                left.Name = $"{Mesh.DefaultName}_{ColumnNumberToName(colNumber)}!";
-                cols.Add(left);
+                xSlices.Add((left, xIndex));
             }
-            
+
             currentMesh = right;
-            colNumber++;
+            xIndex++;
         }
 
         if (currentMesh.FacesCount > 0)
         {
-            currentMesh.Name = $"{Mesh.DefaultName}_{ColumnNumberToName(colNumber)}!";
-            cols.Add(currentMesh);
+            xSlices.Add((currentMesh, xIndex));
         }
-        
+
         var yMin = bounds.Min.Y;
         var yMax = bounds.Max.Y;
+        var zMin = bounds.Min.Z;
+        var zMax = bounds.Max.Z;
         var tasks = new List<Task>();
-        
-        for (var i = 0; i < cols.Count; i++)
+
+        for (var i = 0; i < xSlices.Count; i++)
         {
-            var col = cols[i];
+            var xSlice = xSlices[i];
             var positionY = yMin + tileSize;
-            tasks.Add(Task.Run(() => RecurseSplitByY(col, positionY, tileSize, yMax, meshes, 1)));
+            tasks.Add(Task.Run(() => RecurseSplitByYZ(xSlice.mesh, xSlice.xIndex, positionY, tileSize, yMax, zMin, zMax, meshes, 0)));
         }
-        
+
         await Task.WhenAll(tasks);
         return meshes.Count;
     }
 
-    private static void RecurseSplitByY(IMesh mesh, double positionY, double tileSize, double yMax, ConcurrentBag<IMesh> meshes, int row)
+    private static void RecurseSplitByYZ(IMesh mesh, int xIndex, double positionY, double tileSize, double yMax, double zMin, double zMax, ConcurrentBag<IMesh> meshes, int yIndex)
     {
         mesh.Split(yutils3, positionY, out var left, out var right);
 
         if (left.FacesCount > 0)
         {
-            var name = left.Name;
-            var split = name.Split('!');
-            left.Name = $"{split[0]}{row}";
-            meshes.Add(left);
+            RecurseSplitByZ(left, xIndex, yIndex, zMin + tileSize, tileSize, zMax, meshes, 0);
         }
 
-        row++;
+        yIndex++;
         var newPositionY = positionY + tileSize;
 
         if (newPositionY < yMax)
         {
-            RecurseSplitByY(right, newPositionY, tileSize, yMax, meshes, row);
+            RecurseSplitByYZ(right, xIndex, newPositionY, tileSize, yMax, zMin, zMax, meshes, yIndex);
         }
         else
         {
             if (right.FacesCount > 0)
             {
-                var name = right.Name;
-                var split = name.Split('!');
-                right.Name = $"{split[0]}{row}";
-                meshes.Add(right);
+                RecurseSplitByZ(right, xIndex, yIndex, zMin + tileSize, tileSize, zMax, meshes, 0);
             }
         }
     }
-    
-    private static string ColumnNumberToName(int columnNumber)
+
+    private static void RecurseSplitByZ(IMesh mesh, int xIndex, int yIndex, double positionZ, double tileSize, double zMax, ConcurrentBag<IMesh> meshes, int zIndex)
     {
-        string columnName = "";
-        while (columnNumber > 0)
+        mesh.Split(zutils3, positionZ, out var left, out var right);
+
+        if (left.FacesCount > 0)
         {
-            columnNumber--;
-            columnName = (char)('A' + (columnNumber % 26)) + columnName;
-            columnNumber /= 26;
+            left.Name = $"{xIndex}_{yIndex}_{zIndex}";
+            meshes.Add(left);
         }
-        return columnName;
+
+        zIndex++;
+        var newPositionZ = positionZ + tileSize;
+
+        if (newPositionZ < zMax)
+        {
+            RecurseSplitByZ(right, xIndex, yIndex, newPositionZ, tileSize, zMax, meshes, zIndex);
+        }
+        else
+        {
+            if (right.FacesCount > 0)
+            {
+                right.Name = $"{xIndex}_{yIndex}_{zIndex}";
+                meshes.Add(right);
+            }
+        }
     }
 
     #endregion

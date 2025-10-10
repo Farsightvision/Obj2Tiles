@@ -22,8 +22,11 @@ public sealed class Options
     // [Option('l', "lods", Required = false, HelpText = "How many levels of details", Default = 3)]
     // public int LODs { get; set; }
 
-    [Option('k', "keep-textures", Required = false, HelpText = "Keeps original textures", Default = false)]
-    public bool KeepOriginalTextures { get; set; }
+    // [Option('k', "keep-textures", Required = false, HelpText = "Keeps original textures", Default = false)]
+    // public bool KeepOriginalTextures { get; set; }
+    
+    [Option('x', "use-ktx-textures", Required = false, HelpText = "Use ktx textures compression", Default = true)]
+    public bool UseKtxTextures { get; set; }
     
     // [Option("lat", Required = false, HelpText = "Latitude of the mesh", Default = null)]
     // public double? Latitude { get; set; }

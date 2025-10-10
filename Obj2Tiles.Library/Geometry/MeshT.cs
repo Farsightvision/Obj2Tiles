@@ -31,7 +31,6 @@ public class MeshT : IMesh
     private const int MaxAtlasSize = 8192;
 
     public string Name { get; set; } = DefaultName;
-    public bool KeepOriginalTextures { get; set; } = true;
     public string FilePath { get; private set; }
 
     public MeshT(
@@ -1342,11 +1341,9 @@ public class MeshT : IMesh
             RemoveUnusedVerticesAndUvs();
 
         var materialsPath = Path.ChangeExtension(path, "mtl");
-
         var folderPath = Path.GetDirectoryName(path) ?? string.Empty;
 
-        if (!KeepOriginalTextures)
-            TrimTextures(folderPath);
+        TrimTextures(folderPath);
 
         if (!_saveUv)
         {
@@ -1432,23 +1429,6 @@ public class MeshT : IMesh
             for (var index = 0; index < _materials.Count; index++)
             {
                 var material = _materials[index];
-
-                if (KeepOriginalTextures && material.Texture != null)
-                {
-                    var folder = Path.GetDirectoryName(path);
-
-                    var textureFileName =
-                        $"{Path.GetFileNameWithoutExtension(path)}-texture-{index}{Path.GetExtension(material.Texture)}";
-
-                    var newTexturePath =
-                        folder != null ? Path.Combine(folder, textureFileName) : textureFileName;
-
-                    if (!File.Exists(newTexturePath))
-                        File.Copy(material.Texture, newTexturePath, true);
-
-                    material.Texture = textureFileName;
-                }
-
                 writer.WriteLine(material.ToMtl());
             }
         }

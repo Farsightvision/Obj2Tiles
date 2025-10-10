@@ -6,10 +6,10 @@ public class AppConfig
     public string Output { get; set; }
     public int MaxVerticesPerTile { get; set; }
     public double PackingThreshold { get; set; }
-    public bool KeepOriginalTextures { get; set; }
     public bool KeepIntermediateFiles { get; set; }
     public LodConfig[] LODs { get; set; }
     public int ThreadsCount { get; set; }
+    public bool UseKtxTextures { get; set; }
 }
 
 public class LodConfig

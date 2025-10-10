@@ -39,15 +39,14 @@ namespace Obj2Tiles
             var pipelineId = Guid.NewGuid().ToString();
             var sw = new Stopwatch();
             var swg = Stopwatch.StartNew();
-
-            Func<string, string> createTempFolder = s => CreateTempFolder(s, Path.Combine(config.Output, ".temp"));
+            var tempFolder = Path.Combine(config.Output, ".temp");
 
             string? destFolderDecimation = null;
             string? destFolderSplit = null;
 
             try
             {
-                destFolderDecimation = createTempFolder($"{pipelineId}-obj2tiles-decimation");
+                destFolderDecimation = CreateTempFolder($"{pipelineId}-obj2tiles-decimation", tempFolder);
                 Console.WriteLine($" => Decimation stage with {config.LODs.Length} LODs");
                 sw.Start();
                 var decimateRes = await StagesFacade.Decimate(config.Input, destFolderDecimation, config.LODs);
@@ -55,16 +54,15 @@ namespace Obj2Tiles
                 Console.WriteLine();
 
                 Console.WriteLine($" => Splitting stage with {config.MaxVerticesPerTile} vertices per tile");
-                destFolderSplit = createTempFolder($"{pipelineId}-obj2tiles-split");
+                destFolderSplit = CreateTempFolder($"{pipelineId}-obj2tiles-split", tempFolder);
                 
                 var meshes = await StagesFacade.Split(decimateRes.DestFiles, destFolderSplit,
-                    config.MaxVerticesPerTile, decimateRes.Bounds, config.PackingThreshold, config.LODs,
-                    config.KeepOriginalTextures, config.ThreadsCount);
+                    config.MaxVerticesPerTile, decimateRes.Bounds, config.PackingThreshold, config.LODs, config.ThreadsCount);
 
                 Console.WriteLine(" ?> Splitting stage done in {0}", sw.Elapsed);
                 Console.WriteLine();
 
-                if (!config.KeepOriginalTextures)
+                if (config.UseKtxTextures)
                 {
                     sw.Restart();
                     Console.WriteLine(" ?> Compressing png to ktx2");
@@ -150,8 +148,8 @@ namespace Obj2Tiles
                 MaxVerticesPerTile = options.MaxVerticesPerTile,
                 PackingThreshold = options.PackingThreshold,
                 ThreadsCount = options.ThreadsCount,
-                KeepOriginalTextures = options.KeepOriginalTextures,
                 KeepIntermediateFiles = options.KeepIntermediateFiles,
+                UseKtxTextures = options.UseKtxTextures,
                 LODs = JsonConvert.DeserializeObject<LodConfig[]>(options.LODs)
             };
             

@@ -13,13 +13,12 @@ public static partial class StagesFacade
         Box3 bounds,
         double packingThreshold,
         LodConfig[] lodConfigs,
-        bool keepOriginalTextures,
         int threadsCount)
     {
         var tasks = new List<Task<(LodConfig, IMesh[])>>();
         var lod0File = sourceFiles[0];
         var mesh = MeshUtils.LoadMesh(lod0File, false, true, packingThreshold, lodConfigs[0].Quality, out _);
-        var tileSize = await MeshUtils.CalculateOptimalTileSize(mesh, divisions);
+        var tileSize = MeshUtils.CalculateOptimalTileSize(mesh, divisions);
         var semaphore = new SemaphoreSlim(threadsCount);
         
         for (var index = 0; index < sourceFiles.Length; index++)
@@ -28,8 +27,7 @@ public static partial class StagesFacade
             var file = sourceFiles[index];
             var dest = Path.Combine(destFolder, "LOD-" + index);
 
-            var splitTask = Split(file, dest, tileSize, packingThreshold, lod, bounds,
-                keepOriginalTextures, semaphore, SplitPointStrategy.VertexBaricenter);
+            var splitTask = Split(file, dest, tileSize, packingThreshold, lod, bounds, semaphore, SplitPointStrategy.VertexBaricenter);
 
             tasks.Add(splitTask);
         }
@@ -39,8 +37,7 @@ public static partial class StagesFacade
     }
 
     public static async Task<(LodConfig, IMesh[])> Split(string sourcePath, string destPath, double tileSize,
-        double packingThreshold, LodConfig lod, Box3? bounds,
-        bool keepOriginalTextures, SemaphoreSlim semaphore, SplitPointStrategy splitPointStrategy)
+        double packingThreshold, LodConfig lod, Box3? bounds, SemaphoreSlim semaphore, SplitPointStrategy splitPointStrategy)
     {
         var sw = new Stopwatch();
 
@@ -60,7 +57,7 @@ public static partial class StagesFacade
 
         sw.Restart();
 
-        var count = await MeshUtils.SplitByTileSizeXY(mesh, bounds, tileSize, meshes);
+        var count = await MeshUtils.SplitByTileSizeXYZ(mesh, bounds, tileSize, meshes);
 
         sw.Stop();
 
@@ -77,9 +74,6 @@ public static partial class StagesFacade
 
             try
             {
-                if (m is MeshT t)
-                    t.KeepOriginalTextures = keepOriginalTextures;
-
                 var path = Path.Combine(destPath, $"{m.Name}.obj");
                 await Task.Run(() => m.WriteObj(path));
             }
