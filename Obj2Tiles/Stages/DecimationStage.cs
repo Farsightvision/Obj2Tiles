@@ -9,7 +9,7 @@ namespace Obj2Tiles.Stages;
 
 public static partial class StagesFacade
 {
-    public static async Task<DecimateResult> Decimate(string sourcePath, string destPath, LodConfig[] lods)
+    public static DecimateResult Decimate(string sourcePath, string destPath, LodConfig[] lods)
     {
         var sourceObjMesh = new ObjMesh();
         sourceObjMesh.ReadFile(sourcePath);
@@ -34,7 +34,7 @@ public static partial class StagesFacade
             else
             {
                 Console.WriteLine(" -> Decimating mesh {0} with quality {1:0.00}", fileName, lod.Quality);
-                await Task.Run(() => InternalDecimate(sourceObjMesh, destFile, lod.Quality));
+                InternalDecimate(sourceObjMesh, destFile, lod.Quality);
                 destFiles.Add(destFile);
             }
         }

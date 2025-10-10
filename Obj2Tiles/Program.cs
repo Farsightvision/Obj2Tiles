@@ -49,7 +49,7 @@ namespace Obj2Tiles
                 destFolderDecimation = CreateTempFolder($"{pipelineId}-obj2tiles-decimation", tempFolder);
                 Console.WriteLine($" => Decimation stage with {config.LODs.Length} LODs");
                 sw.Start();
-                var decimateRes = await StagesFacade.Decimate(config.Input, destFolderDecimation, config.LODs);
+                var decimateRes = StagesFacade.Decimate(config.Input, destFolderDecimation, config.LODs);
                 Console.WriteLine(" ?> Decimation stage done in {0}", sw.Elapsed);
                 Console.WriteLine();
 

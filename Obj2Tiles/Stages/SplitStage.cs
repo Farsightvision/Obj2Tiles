@@ -15,28 +15,26 @@ public static partial class StagesFacade
         LodConfig[] lodConfigs,
         int threadsCount)
     {
-        var tasks = new List<Task<(LodConfig, IMesh[])>>();
+        var results = new Dictionary<LodConfig, IMesh[]>();
         var lod0File = sourceFiles[0];
         var mesh = MeshUtils.LoadMesh(lod0File, false, true, packingThreshold, lodConfigs[0].Quality, out _);
         var tileSize = MeshUtils.CalculateOptimalTileSize(mesh, divisions);
         var semaphore = new SemaphoreSlim(threadsCount);
-        
+
         for (var index = 0; index < sourceFiles.Length; index++)
         {
             var lod = lodConfigs[index];
             var file = sourceFiles[index];
             var dest = Path.Combine(destFolder, "LOD-" + index);
 
-            var splitTask = Split(file, dest, tileSize, packingThreshold, lod, bounds, semaphore, SplitPointStrategy.VertexBaricenter);
-
-            tasks.Add(splitTask);
+            var result = await Split(file, dest, tileSize, packingThreshold, lod, bounds, semaphore, SplitPointStrategy.VertexBaricenter);
+            results.Add(lod, result);
         }
 
-        await Task.WhenAll(tasks);
-        return tasks.ToDictionary(task => task.Result.Item1, task => task.Result.Item2);
+        return results;
     }
 
-    public static async Task<(LodConfig, IMesh[])> Split(string sourcePath, string destPath, double tileSize,
+    public static async Task<IMesh[]> Split(string sourcePath, string destPath, double tileSize,
         double packingThreshold, LodConfig lod, Box3? bounds, SemaphoreSlim semaphore, SplitPointStrategy splitPointStrategy)
     {
         var sw = new Stopwatch();
@@ -68,7 +66,7 @@ public static partial class StagesFacade
 
         sw.Restart();
 
-        var tasks = meshes.Select(async m =>
+        foreach (var m in meshes)
         {
             await semaphore.WaitAsync();
 
@@ -81,11 +79,10 @@ public static partial class StagesFacade
             {
                 semaphore.Release();
             }
-        }).ToArray();
+        }
 
-        await Task.WhenAll(tasks);
         Console.WriteLine($" ?> {meshes.Count} tiles written in {sw.ElapsedMilliseconds}ms");
-        return (lod, meshes.ToArray());
+        return meshes.ToArray();
     }
 }
 
