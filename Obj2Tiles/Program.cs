@@ -57,7 +57,7 @@ namespace Obj2Tiles
                 destFolderSplit = CreateTempFolder($"{pipelineId}-obj2tiles-split", tempFolder);
                 
                 var meshes = StagesFacade.Split(decimateRes.DestFiles, destFolderSplit,
-                    config.MaxVerticesPerTile, decimateRes.Bounds, config.PackingThreshold, config.LODs, config.ThreadsCount);
+                    config.MaxVerticesPerTile, decimateRes.Bounds, config.PackingThreshold, config.LODs, config.ThreadsCount, config.MaxTotalAtlasArea);
 
                 Console.WriteLine(" ?> Splitting stage done in {0}", sw.Elapsed);
                 Console.WriteLine();
@@ -73,7 +73,7 @@ namespace Obj2Tiles
 
                 sw.Restart();
                 Console.WriteLine(" ?> Converting to glb");
-                StagesFacade.Convert(destFolderSplit, config.Output, config.LODs);
+                await StagesFacade.Convert(destFolderSplit, config.Output, config.LODs, config.ThreadsCount);
                 Console.WriteLine(" ?> Converting done in {0}", sw.Elapsed);
                 Console.WriteLine();
             }
@@ -148,6 +148,7 @@ namespace Obj2Tiles
                 MaxVerticesPerTile = options.MaxVerticesPerTile,
                 PackingThreshold = options.PackingThreshold,
                 ThreadsCount = options.ThreadsCount,
+                MaxTotalAtlasArea = options.MaxTotalAtlasArea,
                 KeepIntermediateFiles = options.KeepIntermediateFiles,
                 UseKtxTextures = options.UseKtxTextures,
                 LODs = JsonConvert.DeserializeObject<LodConfig[]>(options.LODs)

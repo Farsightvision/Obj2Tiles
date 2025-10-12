@@ -51,7 +51,10 @@ public sealed class Options
     
     [Option("threads", Required = false, HelpText = "Count threads for parallel ktx compression", Default = 8)]
     public int ThreadsCount { get; set; }
-    
+
+    [Option("max-atlas-area", Required = false, HelpText = "Maximum total atlas area for batch processing (pixels squared)", Default = 8102 * 8102)]
+    public int MaxTotalAtlasArea { get; set; }
+
     [Option('l', "lods", Required = false, HelpText = "Lod's json")]
     public string LODs { get; set; }
 

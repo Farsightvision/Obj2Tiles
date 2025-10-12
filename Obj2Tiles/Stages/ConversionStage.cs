@@ -2,7 +2,7 @@
 
 public static partial class StagesFacade
 {
-    public static void Convert(string sourcePath, string destPath, LodConfig[] lods)
+    public static async Task Convert(string sourcePath, string destPath, LodConfig[] lods, int threadsCount)
     {
         var filesToConvert = new List<Tuple<string, string>>();
 
@@ -19,10 +19,29 @@ public static partial class StagesFacade
             }
         }
 
-        Parallel.ForEach(filesToConvert, (file) =>
+        var semaphore = new SemaphoreSlim(threadsCount);
+        var tasks = new List<Task>();
+
+        foreach (var file in filesToConvert)
+        {
+            tasks.Add(ConvertFile(file, semaphore));
+        }
+
+        await Task.WhenAll(tasks);
+    }
+
+    private static async Task ConvertFile(Tuple<string, string> file, SemaphoreSlim semaphore)
+    {
+        await semaphore.WaitAsync();
+
+        try
         {
             Console.WriteLine($" -> Converting to Glb '{file.Item1}'");
             Utils.ConvertGlb(file.Item1, file.Item2);
-        });
+        }
+        finally
+        {
+            semaphore.Release();
+        }
     }
 }

@@ -1,5 +1,7 @@
 ﻿using System.Diagnostics;
+using Obj2Tiles.Library;
 using Obj2Tiles.Library.Geometry;
+using Obj2Tiles.Library.Materials;
 
 namespace Obj2Tiles.Stages;
 
@@ -12,7 +14,8 @@ public static partial class StagesFacade
         Box3 bounds,
         double packingThreshold,
         LodConfig[] lodConfigs,
-        int threadsCount)
+        int threadsCount,
+        int maxTotalAtlasArea)
     {
         var results = new Dictionary<LodConfig, List<IMesh>>();
         var lod0File = sourceFiles[0];
@@ -25,7 +28,7 @@ public static partial class StagesFacade
             var file = sourceFiles[index];
             var dest = Path.Combine(destFolder, "LOD-" + index);
 
-            var meshes = Split(file, dest, tileSize, packingThreshold, lod, bounds, SplitPointStrategy.VertexBaricenter);
+            var meshes = Split(file, dest, tileSize, packingThreshold, lod, bounds, SplitPointStrategy.VertexBaricenter, maxTotalAtlasArea);
             results.Add(lod, meshes);
         }
 
@@ -33,7 +36,7 @@ public static partial class StagesFacade
     }
 
     public static List<IMesh> Split(string sourcePath, string destPath, double tileSize,
-        double packingThreshold, LodConfig lod, Box3? bounds, SplitPointStrategy splitPointStrategy)
+        double packingThreshold, LodConfig lod, Box3? bounds, SplitPointStrategy splitPointStrategy, int maxTotalAtlasArea)
     {
         var sw = new Stopwatch();
 
@@ -58,18 +61,95 @@ public static partial class StagesFacade
         Console.WriteLine(
             $" ?> Done {meshes.Count} edge splits in {sw.ElapsedMilliseconds}ms ({(double)meshes.Count / sw.ElapsedMilliseconds:F2} split/ms)");
 
-        Console.WriteLine(" -> Writing tiles");
-
         sw.Restart();
 
-        foreach (var mesh in meshes)
+        if (sourceMesh is MeshT sourceMeshT)
         {
-            var path = Path.Combine(destPath, $"{mesh.Name}.obj");
-            mesh.WriteObj(path);
+            Console.WriteLine(" -> Prepare Repack Textures");
+            
+            var meshTs = meshes.Cast<MeshT>().ToList();
+        
+            for (var i = 0; i < meshTs.Count; i++)
+            {
+                var meshT = meshTs[i];
+                var path = Path.Combine(destPath, $"{meshT.Name}.obj");
+                meshT.FilePath = path;
+                meshT.PrepareRepackTextures();
+            }
+            
+            Console.WriteLine(" -> Prepare Repack Textures");
+            
+            var currentBatch = new List<MeshT>();
+            long currentSize = 0;
+        
+            for (var i = 0; i < meshTs.Count; i++)
+            {
+                var meshT = meshTs[i];
+                var atlasSize = meshT.AtlasEdgeLength * meshT.AtlasEdgeLength;
+
+                if (currentSize + atlasSize > maxTotalAtlasArea && currentBatch.Count > 0)
+                {
+                    ProcessBatch(currentBatch, sourceMeshT.Materials);
+
+                    currentBatch.Clear();
+                    currentSize = 0;
+                }
+
+                currentBatch.Add(meshT);
+                currentSize += atlasSize;
+            }
+            
+            if (currentBatch.Count > 0)
+            {
+                ProcessBatch(currentBatch, sourceMeshT.Materials);
+            }
+            
+            Console.WriteLine(" -> Write Geometry");
+            
+            for (var i = 0; i < meshTs.Count; i++)
+            {
+                var meshT = meshTs[i];
+                meshT.WriteGeometry();
+            }
+        }
+        else
+        {
+            Console.WriteLine(" -> Writing tiles");
+            
+            for (var i = 0; i < meshes.Count; i++)
+            {
+                var mesh = meshes[i];
+                var path = Path.Combine(destPath, $"{mesh.Name}.obj");
+                mesh.WriteObj(path);
+            }
         }
 
         Console.WriteLine($" ?> {meshes.Count} tiles written in {sw.ElapsedMilliseconds}ms");
         return meshes;
+    }
+
+    private static void ProcessBatch(List<MeshT> meshTs, IReadOnlyList<Material> materials)
+    {
+        Console.WriteLine($"Fill and save Atlases count {meshTs.Count}");
+        
+        for (var i = 0; i < materials.Count; i++)
+        {
+            var material = materials[i];
+
+            for (var j = 0; j < meshTs.Count; j++)
+            {
+                var meshT = meshTs[j];
+                meshT.FillAtlases(material);
+            }
+            
+            TexturesCache.Clear();
+        }
+
+        for (var j = 0; j < meshTs.Count; j++)
+        {
+            var meshT = meshTs[j];
+            meshT.SaveAtlasesAndUpdateMaterial();
+        }
     }
 }
 

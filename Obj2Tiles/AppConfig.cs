@@ -10,6 +10,7 @@ public class AppConfig
     public LodConfig[] LODs { get; set; }
     public int ThreadsCount { get; set; }
     public bool UseKtxTextures { get; set; }
+    public int MaxTotalAtlasArea { get; set; }
 }
 
 public class LodConfig
