@@ -518,10 +518,6 @@ public class MeshT : IMesh
 
         while (!TryPackClusterInfos(_clusterInfos, edgeLength))
         {
-            if (edgeLength == MaxAtlasSize)
-                throw new InvalidOperationException(
-                    $"Cluster too large to pack {edgeLength} [{Name}]. Reached max size!");
-
             var newEdgeLength = Math.Max(edgeLength + 10, (int)(edgeLength * 1.02));
             edgeLength = newEdgeLength;
             iterations++;
@@ -765,8 +761,7 @@ public class MeshT : IMesh
             if (hasAtlasTexture)
             {
                 var compressedTextureWidth = (int)(_atlasTexture.Width * _textureQuality);
-                var targetPowerOfTwo = Math.Min(Common.PreviousPowerOfTwo(_atlasTexture.Width),
-                    Common.ClosestPowerOfTwo(compressedTextureWidth));
+                var targetPowerOfTwo = Math.Min(Common.PreviousPowerOfTwo(compressedTextureWidth), MaxAtlasSize);
 
                 if (_atlasTexture.Width != targetPowerOfTwo)
                 {
