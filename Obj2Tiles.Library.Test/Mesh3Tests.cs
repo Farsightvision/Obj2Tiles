@@ -1,13 +1,9 @@
-using System.Diagnostics;
 using System.IO;
-using System.Linq;
-using System.Numerics;
 using FluentAssertions;
 using NUnit.Framework;
 using Obj2Tiles.Common;
 using Obj2Tiles.Library.Geometry;
 using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Processing;
 using SixLabors.ImageSharp.PixelFormats;
 using Path = System.IO.Path;
 
@@ -44,7 +40,7 @@ public class Mesh3Tests
     {
         var testPath = GetTestOutputPath(nameof(WriteObj_Square_RemoveUnused));
 
-        var mesh = MeshUtils.LoadMesh(Path.Combine(TestDataPath, "square-unused.obj"));
+        var mesh = MeshUtils.LoadMesh(Path.Combine(TestDataPath, "square-unused.obj"), false, true, 0.1f, 1f);
         
         mesh.WriteObj(Path.Combine(testPath, "square.obj"));
     }
@@ -54,9 +50,7 @@ public class Mesh3Tests
     {
         var testPath = GetTestOutputPath(nameof(WriteObj_Cube2_Repacking));
 
-        var mesh = (MeshT)MeshUtils.LoadMesh(Path.Combine(TestDataPath, "cube2/cube.obj"));
-
-        mesh.TexturesStrategy = TexturesStrategy.Repack;
+        var mesh = (MeshT)MeshUtils.LoadMesh(Path.Combine(TestDataPath, "cube2/cube.obj"), false, true, 0.1f, 1f);
 
         mesh.WriteObj(Path.Combine(testPath, "mesh.obj"));
     }
@@ -66,8 +60,7 @@ public class Mesh3Tests
     {
         var testPath = GetTestOutputPath(nameof(WriteObj_Cube2_PreserveOriginalTextures));
 
-        var mesh = (MeshT)MeshUtils.LoadMesh(Path.Combine(TestDataPath, "cube2/cube.obj"));
-        mesh.TexturesStrategy = TexturesStrategy.KeepOriginal;
+        var mesh = (MeshT)MeshUtils.LoadMesh(Path.Combine(TestDataPath, "cube2/cube.obj"), false, true, 0.1f, 1f);
 
         mesh.WriteObj(Path.Combine(testPath, "mesh.obj"));
     }
@@ -77,9 +70,7 @@ public class Mesh3Tests
     {
         var testPath = GetTestOutputPath(nameof(WriteObj_Cube_Repacking));
 
-        var mesh = (MeshT)MeshUtils.LoadMesh(Path.Combine(TestDataPath, "cube/cube.obj"));
-
-        mesh.TexturesStrategy = TexturesStrategy.Repack;
+        var mesh = (MeshT)MeshUtils.LoadMesh(Path.Combine(TestDataPath, "cube/cube.obj"), false, true, 0.1f, 1f);
 
         mesh.WriteObj(Path.Combine(testPath, "mesh.obj"));
     }
@@ -89,8 +80,7 @@ public class Mesh3Tests
     {
         var testPath = GetTestOutputPath(nameof(WriteObj_Cube_PreserveOriginalTextures));
 
-        var mesh = (MeshT)MeshUtils.LoadMesh(Path.Combine(TestDataPath, "cube/cube.obj"));
-        mesh.TexturesStrategy = TexturesStrategy.KeepOriginal;
+        var mesh = (MeshT)MeshUtils.LoadMesh(Path.Combine(TestDataPath, "cube/cube.obj"), false, true, 0.1f, 1f);
 
         mesh.WriteObj(Path.Combine(testPath, "mesh.obj"));
     }
@@ -100,9 +90,8 @@ public class Mesh3Tests
     {
         using var fs = new TestFS(BrightonTexturingTestUrl, nameof(Mesh3Tests));
 
-        var mesh = (MeshT)MeshUtils.LoadMesh(Path.Combine(fs.TestFolder, "odm_textured_model_geo.obj"));
+        var mesh = (MeshT)MeshUtils.LoadMesh(Path.Combine(fs.TestFolder, "odm_textured_model_geo.obj"), false, true, 0.1f, 1f);
 
-        mesh.TexturesStrategy = TexturesStrategy.Repack;
         var outputPath = Path.Combine(fs.TestFolder, "output");
         Directory.CreateDirectory(outputPath);
 
@@ -116,9 +105,7 @@ public class Mesh3Tests
     {
         var testPath = GetTestOutputPath(nameof(WriteObj_Canyon_Repacking));
 
-        var mesh = (MeshT)MeshUtils.LoadMesh(@"C:\datasets\canyon\odm_texturing\odm_textured_model_geo.obj");
-
-        mesh.TexturesStrategy = TexturesStrategy.Repack;
+        var mesh = (MeshT)MeshUtils.LoadMesh(@"C:\datasets\canyon\odm_texturing\odm_textured_model_geo.obj", false, true, 0.1f, 1f);
 
         mesh.WriteObj(Path.Combine(testPath, "mesh.obj"));
     }
@@ -128,14 +115,11 @@ public class Mesh3Tests
     {
         var testPath = GetTestOutputPath(nameof(WriteObj_Splitted_Cube_PreserveOriginalTextures));
 
-        var mesh = MeshUtils.LoadMesh(Path.Combine(TestDataPath, "cube/cube.obj"));
+        var mesh = MeshUtils.LoadMesh(Path.Combine(TestDataPath, "cube/cube.obj"), false, true, 0.1f, 1f);
 
         var center = mesh.GetVertexBaricenter();
 
         mesh.Split(xutils, center.X, out var left, out var right);
-
-        ((MeshT)left).TexturesStrategy = TexturesStrategy.KeepOriginal;
-        ((MeshT)right).TexturesStrategy = TexturesStrategy.KeepOriginal;
 
         left.WriteObj(Path.Combine(testPath, "left.obj"));
         right.WriteObj(Path.Combine(testPath, "right.obj"));
@@ -146,14 +130,11 @@ public class Mesh3Tests
     {
         var testPath = GetTestOutputPath(nameof(WriteObj_SplittedX_Cube_Repacking));
 
-        var mesh = MeshUtils.LoadMesh(Path.Combine(TestDataPath, "cube/cube.obj"));
+        var mesh = MeshUtils.LoadMesh(Path.Combine(TestDataPath, "cube/cube.obj"), false, true, 0.1f, 1f);
 
         var center = mesh.GetVertexBaricenter();
 
         mesh.Split(xutils, center.X, out var left, out var right);
-
-        ((MeshT)left).TexturesStrategy = TexturesStrategy.Repack;
-        ((MeshT)right).TexturesStrategy = TexturesStrategy.Repack;
 
         left.WriteObj(Path.Combine(testPath, "left.obj"));
         right.WriteObj(Path.Combine(testPath, "right.obj"));
@@ -164,14 +145,11 @@ public class Mesh3Tests
     {
         var testPath = GetTestOutputPath(nameof(WriteObj_SplittedX_Cube_PreserveOriginalTextures));
 
-        var mesh = MeshUtils.LoadMesh(Path.Combine(TestDataPath, "cube/cube.obj"));
+        var mesh = MeshUtils.LoadMesh(Path.Combine(TestDataPath, "cube/cube.obj"), false, true, 0.1f, 1f);
 
         var center = mesh.GetVertexBaricenter();
 
         mesh.Split(xutils, center.X, out var left, out var right);
-
-        ((MeshT)left).TexturesStrategy = TexturesStrategy.KeepOriginal;
-        ((MeshT)right).TexturesStrategy = TexturesStrategy.KeepOriginal;
 
         left.WriteObj(Path.Combine(testPath, "left.obj"));
         right.WriteObj(Path.Combine(testPath, "right.obj"));
@@ -182,14 +160,11 @@ public class Mesh3Tests
     {
         var testPath = GetTestOutputPath(nameof(WriteObj_Splitted_Cube2_PreserveOriginalTextures));
 
-        var mesh = MeshUtils.LoadMesh(Path.Combine(TestDataPath, "cube2/cube.obj"));
+        var mesh = MeshUtils.LoadMesh(Path.Combine(TestDataPath, "cube2/cube.obj"), false, true, 0.1f, 1f);
 
         var center = mesh.GetVertexBaricenter();
 
         mesh.Split(xutils, center.X, out var left, out var right);
-
-        ((MeshT)left).TexturesStrategy = TexturesStrategy.KeepOriginal;
-        ((MeshT)right).TexturesStrategy = TexturesStrategy.KeepOriginal;
 
         left.WriteObj(Path.Combine(testPath, "left.obj"));
         right.WriteObj(Path.Combine(testPath, "right.obj"));
@@ -200,14 +175,11 @@ public class Mesh3Tests
     {
         var testPath = GetTestOutputPath(nameof(WriteObj_Splitted_Cube2_Repacking));
 
-        var mesh = MeshUtils.LoadMesh(Path.Combine(TestDataPath, "cube2/cube.obj"));
+        var mesh = MeshUtils.LoadMesh(Path.Combine(TestDataPath, "cube2/cube.obj"), false, true, 0.1f, 1f);
 
         var center = mesh.GetVertexBaricenter();
 
         mesh.Split(xutils, center.X, out var left, out var right);
-
-        ((MeshT)left).TexturesStrategy = TexturesStrategy.Repack;
-        ((MeshT)right).TexturesStrategy = TexturesStrategy.Repack;
 
         left.WriteObj(Path.Combine(testPath, "left.obj"));
         right.WriteObj(Path.Combine(testPath, "right.obj"));
@@ -285,7 +257,7 @@ public class Mesh3Tests
     [Test]
     public void Orientation_TestCubeMesh()
     {
-        var mesh = (MeshT)MeshUtils.LoadMesh(Path.Combine(TestDataPath, "cube2/cube.obj"));
+        var mesh = (MeshT)MeshUtils.LoadMesh(Path.Combine(TestDataPath, "cube2/cube.obj"), false, true, 0.1f, 1f);
 
         var orientation = mesh.GetAverageOrientation();
 
@@ -300,7 +272,7 @@ public class Mesh3Tests
         
         using var fs = new TestFS(BrightonTexturingTestUrl, nameof(Mesh3Tests));
 
-        var mesh = (MeshT)MeshUtils.LoadMesh(Path.Combine(fs.TestFolder, "odm_textured_model_geo.obj"));
+        var mesh = (MeshT)MeshUtils.LoadMesh(Path.Combine(fs.TestFolder, "odm_textured_model_geo.obj"), false, true, 0.1f, 1f);
 
         var orientation = mesh.GetAverageOrientation();
 
