@@ -11,14 +11,9 @@ namespace Obj2Tiles.Stages;
 
 public static partial class StagesFacade
 {
-    public static void Tile(string sourcePath, string destPath, int lods, double baseError, Dictionary<string, Box3>[] boundsMapper,
+    public static void Tile(string destPath, int lods, double baseError, Dictionary<string, Box3>[] boundsMapper,
         GpsCoords? coords = null)
     {
-
-        Console.WriteLine(" ?> Working on objs conversion");
-        
-        ConvertAllB3dm(sourcePath, destPath, lods);
-
         Console.WriteLine(" -> Generating tileset.json");
 
         if (coords == null)
@@ -40,7 +35,6 @@ public static partial class StagesFacade
             {
                 GeometricError = baseError,
                 Refine = "ADD",
-
                 Transform = coords.ToEcefTransform(),
                 Children = new List<TileElement>()
             }
@@ -90,7 +84,7 @@ public static partial class StagesFacade
                     Children = new List<TileElement>(),
                     Content = new Content
                     {
-                        Uri = $"LOD-{lod}/{Path.GetFileNameWithoutExtension(descriptor)}.b3dm"
+                        Uri = $"LOD-{lod}/{Path.GetFileNameWithoutExtension(descriptor)}.glb"
                     },
                     BoundingVolume = box3.ToBoundingVolume()
                 };
