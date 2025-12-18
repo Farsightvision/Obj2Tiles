@@ -6,6 +6,13 @@
   "KeepOriginalTextures": false,
   "KeepIntermediateFiles": false,
   "ThreadsCount": 8,
+  "BaseError": 100.0,
+  "Latitude": null,
+  "Longitude": null,
+  "Altitude": 0,
+  "Scale": 1,
+  "YUpToZUp": false,
+  "UseKtxTextures": false,
   "LODs": [
     {
       "Quality": 1.0,

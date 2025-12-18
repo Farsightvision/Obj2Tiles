@@ -25,23 +25,23 @@ public sealed class Options
     // [Option('k', "keep-textures", Required = false, HelpText = "Keeps original textures", Default = false)]
     // public bool KeepOriginalTextures { get; set; }
     
-    [Option('x', "use-ktx-textures", Required = false, HelpText = "Use ktx textures compression", Default = true)]
+    [Option('x', "use-ktx-textures", Required = false, HelpText = "Use ktx textures compression", Default = false)]
     public bool UseKtxTextures { get; set; }
     
-    // [Option("lat", Required = false, HelpText = "Latitude of the mesh", Default = null)]
-    // public double? Latitude { get; set; }
+    [Option("lat", Required = false, HelpText = "Latitude of the mesh", Default = null)]
+    public double? Latitude { get; set; }
     
-    // [Option("lon", Required = false, HelpText = "Longitude of the mesh", Default = null)]
-    // public double? Longitude { get; set; }
+    [Option("lon", Required = false, HelpText = "Longitude of the mesh", Default = null)]
+    public double? Longitude { get; set; }
     
-    // [Option("alt", Required = false, HelpText = "Altitude of the mesh (meters)", Default = 0)]
-    // public double Altitude { get; set; }
+    [Option("alt", Required = false, HelpText = "Altitude of the mesh (meters)", Default = 0)]
+    public double Altitude { get; set; }
     
-    // [Option("scale", Required = false, HelpText = "Scale for data if using units other than meters ( 1200.0/3937.0 for survey ft)", Default = 1.0)]
-    // public double Scale { get; set; }
+    [Option("scale", Required = false, HelpText = "Scale for data if using units other than meters (e.g. 1200.0/3937.0 for survey ft)", Default = 1.0)]
+    public double Scale { get; set; }
     
-    // [Option('e',"error", Required = false, HelpText = "Base error for root node", Default = 100.0)]
-    // public double BaseError { get; set; }
+    [Option('e',"error", Required = false, HelpText = "Base geometric error for root node.", Default = 100.0)]
+    public double BaseError { get; set; }
     
     // [Option("use-system-temp", Required = false, HelpText = "Uses the system temp folder", Default = false)]
     // public bool UseSystemTempFolder { get; set; }
@@ -58,8 +58,8 @@ public sealed class Options
     [Option('l', "lods", Required = false, HelpText = "Lod's json")]
     public string LODs { get; set; }
 
-    // [Option('t', "y-up-to-z-up", Required = false, HelpText = "Convert the upward Y-axis to the upward Z-axis, which is used in some situations where the upward axis may be the Y-axis or the Z-axis after the obj is exported.", Default = false)]
-    // public bool YUpToZUp { get; set; }
+    [Option('t', "y-up-to-z-up", Required = false, HelpText = "Convert the upward Y-axis to the upward Z-axis, which is used in some situations where the upward axis may be the Y-axis or the Z-axis after the obj is exported.", Default = false)]
+    public bool YUpToZUp { get; set; }
 }
 
 // public enum Stage
