@@ -1,7 +1,9 @@
 ﻿using System.Diagnostics;
 using CommandLine;
 using Newtonsoft.Json;
+using Obj2Tiles.Library.Geometry;
 using Obj2Tiles.Stages;
+using Obj2Tiles.Stages.Model;
 
 namespace Obj2Tiles
 {
@@ -76,6 +78,9 @@ namespace Obj2Tiles
                 await StagesFacade.Convert(destFolderSplit, config.Output, config.LODs, config.ThreadsCount);
                 Console.WriteLine(" ?> Converting done in {0}", sw.Elapsed);
                 Console.WriteLine();
+
+                GenerateTileset(sw, meshes, config);
+
             }
             catch (Exception ex)
             {
@@ -151,6 +156,12 @@ namespace Obj2Tiles
                 MaxTotalAtlasArea = options.MaxTotalAtlasArea,
                 KeepIntermediateFiles = options.KeepIntermediateFiles,
                 UseKtxTextures = options.UseKtxTextures,
+                BaseError = options.BaseError,
+                Latitude = options.Latitude,
+                Longitude = options.Longitude,
+                Altitude = options.Altitude,
+                Scale = options.Scale,
+                YUpToZUp = options.YUpToZUp,
                 LODs = JsonConvert.DeserializeObject<LodConfig[]>(options.LODs)
             };
             
@@ -162,6 +173,21 @@ namespace Obj2Tiles
             var tempFolder = Path.Combine(baseFolder, folderName);
             Directory.CreateDirectory(tempFolder);
             return tempFolder;
+        }
+
+        private static void GenerateTileset(Stopwatch sw, Dictionary<LodConfig, List<IMesh>> meshes, AppConfig config)
+        {
+            sw.Restart();
+            Console.WriteLine(" ?> Generating tileset.json");
+
+            var boundsMapper = TilesetGenerationHelper.PrepareBoundsMapper(meshes, config.LODs);
+            var coords = TilesetGenerationHelper.CreateGpsCoords(
+                config.Latitude, config.Longitude, config.Altitude, config.Scale, config.YUpToZUp);
+
+            StagesFacade.Tile(config.Output, config.LODs.Length, config.BaseError, boundsMapper, coords);
+
+            Console.WriteLine(" ?> Tileset generation done in {0}", sw.Elapsed);
+            Console.WriteLine();
         }
     }
 }
