@@ -9,7 +9,6 @@ public class AppConfig
     public bool KeepIntermediateFiles { get; set; }
     public LodConfig[] LODs { get; set; }
     public int ThreadsCount { get; set; }
-    public bool UseKtxTextures { get; set; }
     public int MaxTotalAtlasArea { get; set; }
     public double BaseError { get; set; } = 100.0;
     public double? Latitude { get; set; }
@@ -24,6 +23,4 @@ public class LodConfig
     public float Quality { get; set; }
     public bool SaveVertexColor { get; set; }
     public bool SaveUv { get; set; }
-    public byte KtxQuality { get; set; }
-    public byte KtxCompressionLevel { get; set; }
 }

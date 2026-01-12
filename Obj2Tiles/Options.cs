@@ -25,9 +25,6 @@ public sealed class Options
     // [Option('k', "keep-textures", Required = false, HelpText = "Keeps original textures", Default = false)]
     // public bool KeepOriginalTextures { get; set; }
     
-    [Option('x', "use-ktx-textures", Required = false, HelpText = "Use ktx textures compression", Default = false)]
-    public bool UseKtxTextures { get; set; }
-    
     [Option("lat", Required = false, HelpText = "Latitude of the mesh", Default = null)]
     public double? Latitude { get; set; }
     
@@ -49,7 +46,7 @@ public sealed class Options
     [Option("keep-intermediate", Required = false, HelpText = "Keeps the intermediate files (do not cleanup)", Default = false)]
     public bool KeepIntermediateFiles { get; set; }
     
-    [Option("threads", Required = false, HelpText = "Count threads for parallel ktx compression", Default = 8)]
+    [Option("threads", Required = false, HelpText = "Count threads for parallel operations", Default = 8)]
     public int ThreadsCount { get; set; }
 
     [Option("max-atlas-area", Required = false, HelpText = "Maximum total atlas area for batch processing (pixels squared)", Default = 8102 * 8102)]
