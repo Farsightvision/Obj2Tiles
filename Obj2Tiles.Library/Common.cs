@@ -1,4 +1,4 @@
-﻿using Obj2Tiles.Library.Geometry;
+using Obj2Tiles.Library.Geometry;
 using Obj2Tiles.Library.Materials;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
@@ -45,9 +45,36 @@ public static class Common
         });
     }
 
+    private const double SRGB_THRESHOLD = 0.04045;
+    private const double SRGB_LINEAR_SCALE = 12.92;
+    private const double SRGB_OFFSET = 0.055;
+    private const double SRGB_SCALE = 1.055;
+    private const double SRGB_GAMMA = 2.4;
+
+    /// <summary>
+    /// Converts an sRGB channel value to linear RGB.
+    /// </summary>
+    /// <remarks>
+    /// Formula reference:
+    /// https://spitzak.github.io/conversion/srgb.html
+    /// </remarks>
+    static double SrgbToLinear(byte cByte)
+
+    {
+        var c = cByte / 255.0;
+        if (c <= SRGB_THRESHOLD)
+            return c / SRGB_LINEAR_SCALE;
+
+        return Math.Pow((c + SRGB_OFFSET) / SRGB_SCALE, SRGB_GAMMA);
+    }
+
     public static RGB ConvertToRGB(Rgba32 color)
     {
-        return new RGB(color.R / 255.0, color.G / 255.0, color.B / 255.0);
+        return new RGB(
+            SrgbToLinear(color.R),
+            SrgbToLinear(color.G),
+            SrgbToLinear(color.B)
+        );
     }
 
     public static double Area(Vertex2 a, Vertex2 b, Vertex2 c)
