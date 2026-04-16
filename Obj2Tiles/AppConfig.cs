@@ -1,4 +1,4 @@
-﻿namespace Obj2Tiles;
+namespace Obj2Tiles;
 
 public class AppConfig
 {
@@ -9,6 +9,7 @@ public class AppConfig
     public bool KeepIntermediateFiles { get; set; }
     public LodConfig[] LODs { get; set; }
     public int ThreadsCount { get; set; }
+    public bool UseKtxTextures { get; set; }
     public int MaxTotalAtlasArea { get; set; }
     public double BaseError { get; set; } = 100.0;
     public double? Latitude { get; set; }
@@ -23,4 +24,12 @@ public class LodConfig
     public float Quality { get; set; }
     public bool SaveVertexColor { get; set; }
     public bool SaveUv { get; set; }
+    public byte KtxQuality { get; set; }
+    public byte KtxCompressionLevel { get; set; }
+
+    /// <summary>JPEG quality for atlas textures (1-100). Default: 90.</summary>
+    public int JpegQuality { get; set; } = 90;
+
+    /// <summary>Maximum atlas edge length in pixels. Default: 4096.</summary>
+    public int MaxAtlasSize { get; set; } = 4096;
 }

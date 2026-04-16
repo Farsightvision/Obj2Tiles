@@ -12,21 +12,28 @@
   "Altitude": 0,
   "Scale": 1,
   "YUpToZUp": false,
+  "UseKtxTextures": false,
   "LODs": [
     {
       "Quality": 1.0,
       "SaveVertexColor": false,
-      "SaveUv": true
+      "SaveUv": true,
+      "KtxQuality": 170, // ETC1S quality level 1–255
+      "KtxCompressionLevel": 3 // ETC1S compression level 0-5
     },
     {
       "Quality": 0.5,
       "SaveVertexColor": true,
-      "SaveUv": false
+      "SaveUv": false,
+      "KtxQuality": 128,
+      "KtxCompressionLevel": 0
     },
     {
       "Quality": 0.2,
       "SaveVertexColor": true,
-      "SaveUv": false
+      "SaveUv": false,
+      "KtxQuality": 128,
+      "KtxCompressionLevel": 0
     }
   ]
 }

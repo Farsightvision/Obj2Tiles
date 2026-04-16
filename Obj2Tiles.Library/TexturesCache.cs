@@ -6,37 +6,33 @@ namespace Obj2Tiles.Library;
 
 public static class TexturesCache
 {
-    private static readonly ConcurrentDictionary<string, Image<Rgba32>> Textures = new();
-    private static readonly ConcurrentDictionary<string, ImageInfo> TextureInfos = new();
-    
+    private static readonly ConcurrentDictionary<string, Lazy<Image<Rgba32>>> Textures = new();
+    private static readonly ConcurrentDictionary<string, Lazy<ImageInfo>> TextureInfos = new();
+
     public static Image<Rgba32> GetTexture(string textureName)
     {
-        if (Textures.TryGetValue(textureName, out var txout))
-            return txout;
-
-        var texture = Image.Load<Rgba32>(textureName);
-        Textures.TryAdd(textureName, texture);
-
-        return texture;
+        // Use Lazy<T> to ensure exactly one thread loads each texture,
+        // even under parallel access from multiple meshes/LODs.
+        var lazy = Textures.GetOrAdd(textureName,
+            key => new Lazy<Image<Rgba32>>(() => Image.Load<Rgba32>(key)));
+        return lazy.Value;
     }
-    
+
     public static void Clear()
     {
-        foreach(var texture in Textures)
+        foreach (var kvp in Textures)
         {
-            texture.Value.Dispose();
+            if (kvp.Value.IsValueCreated)
+                kvp.Value.Value.Dispose();
         }
         Textures.Clear();
+        TextureInfos.Clear();
     }
 
     public static ImageInfo GetTextureInfo(string textureName)
     {
-        if (TextureInfos.TryGetValue(textureName, out var info))
-            return info;
-
-        info = Image.Identify(textureName);
-        TextureInfos.TryAdd(textureName, info);
-
-        return info;
+        var lazy = TextureInfos.GetOrAdd(textureName,
+            key => new Lazy<ImageInfo>(() => Image.Identify(key)));
+        return lazy.Value;
     }
 }

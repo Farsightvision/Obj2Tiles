@@ -12,8 +12,10 @@ namespace SilentWave.Obj2Gltf.Gltf
     {
         [JsonProperty("accessors")]
         public List<Accessor> Accessors { get; } = new List<Accessor>();
+        // Generator set to "glTF-Transform v4.3.0" for Android app backward compat —
+        // the app checks this field to decide whether UV flip is needed.
         [JsonProperty("asset")]
-        public Asset Asset { get; set; } = new Asset { Generator = "SilentWave", Version = "2.0" };
+        public Asset Asset { get; set; } = new Asset { Generator = "glTF-Transform v4.3.0", Version = "2.0" };
         [JsonProperty("buffers")]
         public List<Buffer> Buffers { get; } = new List<Buffer>();
         [JsonProperty("bufferViews")]

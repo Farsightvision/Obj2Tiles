@@ -3,4 +3,8 @@ obj/
 /packages/
 riderModule.iml
 /_ReSharper.Caches/
-.vs/
+.vs/publish/
+.idea/Obj2Tiles.iml
+.idea/modules.xml
+.idea/vcs.xml
+.idea/workspace.xml

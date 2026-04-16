@@ -13,7 +13,8 @@ namespace Obj2Tiles.Library.Geometry;
 public class MeshT : IMesh
 {
     public const string DefaultName = "Mesh";
-    private const int MaxAtlasSize = 8192;
+    private const int DefaultMaxAtlasSize = 4096;
+    private const int DefaultJpegQuality = 90;
 
     private sealed class ClusterInfo
     {
@@ -28,6 +29,8 @@ public class MeshT : IMesh
     private readonly bool _saveUv;
     private readonly bool _saveVertexColor;
     private readonly double _textureQuality;
+    private readonly int _jpegQuality;
+    private readonly int _maxAtlasSize;
     private readonly List<RGB> _vertexColors;
     private List<Material> _materials;
     private List<Vertex2> _textureVertices;
@@ -53,10 +56,14 @@ public class MeshT : IMesh
         bool saveVertexColor,
         bool saveUv,
         double packingThreshold,
-        double textureQuality)
+        double textureQuality,
+        int jpegQuality = DefaultJpegQuality,
+        int maxAtlasSize = DefaultMaxAtlasSize)
     {
         _packingThreshold = packingThreshold;
         _textureQuality = textureQuality;
+        _jpegQuality = jpegQuality;
+        _maxAtlasSize = maxAtlasSize;
         _vertices = [..vertices];
         _textureVertices = [..textureVertices];
         _faces = [..faces];
@@ -217,12 +224,12 @@ public class MeshT : IMesh
         var orderedRightTextureVertices = rightTextureVertices.OrderBy(x => x.Value).Select(x => x.Key);
 
         left = new MeshT(orderedLeftVertices, orderedLeftTextureVertices, leftFaces, _materials, _saveVertexColor,
-            _saveUv, _packingThreshold, _textureQuality)
+            _saveUv, _packingThreshold, _textureQuality, _jpegQuality, _maxAtlasSize)
         {
             Name = $"{Name}-{utils.Axis}L"
         };
         right = new MeshT(orderedRightVertices, orderedRightTextureVertices, rightFaces, _materials,
-            _saveVertexColor, _saveUv, _packingThreshold, _textureQuality)
+            _saveVertexColor, _saveUv, _packingThreshold, _textureQuality, _jpegQuality, _maxAtlasSize)
         {
             Name = $"{Name}-{utils.Axis}R"
         };
@@ -749,8 +756,8 @@ public class MeshT : IMesh
             _textureVertices = newTextureVertices.OrderBy(item => item.Value).Select(item => item.Key).ToList();
 
             // Save atlases to disk
-            var textureFileName = $"{Name}-texture-diffuse-atlas.png";
-            var normalFileName = $"{Name}-texture-normal-atlas.png";
+            var textureFileName = $"{Name}-texture-diffuse-atlas.jpg";
+            var normalFileName = $"{Name}-texture-normal-atlas.png"; // normal maps stay PNG (lossless)
 
             var pathTexture = Path.Combine(folderPath, textureFileName);
             var pathNormal = Path.Combine(folderPath, normalFileName);
@@ -761,7 +768,7 @@ public class MeshT : IMesh
             if (hasAtlasTexture)
             {
                 var compressedTextureWidth = (int)(_atlasTexture.Width * _textureQuality);
-                var targetPowerOfTwo = Math.Min(Common.PreviousPowerOfTwo(compressedTextureWidth), MaxAtlasSize);
+                var targetPowerOfTwo = Math.Min(Common.PreviousPowerOfTwo(compressedTextureWidth), _maxAtlasSize);
 
                 if (_atlasTexture.Width != targetPowerOfTwo)
                 {
@@ -775,7 +782,7 @@ public class MeshT : IMesh
                     }));
                 }
 
-                _atlasTexture.Save(pathTexture);
+                _atlasTexture.Save(pathTexture, new SixLabors.ImageSharp.Formats.Jpeg.JpegEncoder { Quality = _jpegQuality });
                 Debug.WriteLine($"Saved texture atlas to {pathTexture}");
             }
 

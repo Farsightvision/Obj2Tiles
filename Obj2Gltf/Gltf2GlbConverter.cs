@@ -25,6 +25,8 @@ namespace SilentWave.Obj2Gltf
                     return "image/jpeg";
                 case ".GIF":
                     return "image/gif";
+                case ".KTX2":
+                    return "image/ktx2";
                 default:
                     throw new ArgumentException("extension not supported");
             }
@@ -70,6 +72,7 @@ namespace SilentWave.Obj2Gltf
                 }
 
                 var imagesToken = o.SelectToken("images");
+                var hasKtx2 = false;
                 if (imagesToken != null)
                 {
                     var images = imagesToken.ToObject<Gltf.Image[]>();
@@ -79,13 +82,51 @@ namespace SilentWave.Obj2Gltf
                         var fileInfo = new FileInfo(Path.Combine(currentDir, image.Uri));
                         var bufferViewIndex = bufferViews.Count;
                         bufferViews.Add(new BufferView() { Buffer = 0, ByteOffset = concatBufferLegth, ByteLength = fileInfo.Length, Name = fileInfo.Name });
+                        var mimeType = GetMimeTypeFromFileName(fileInfo.Name);
+                        if (mimeType == "image/ktx2") hasKtx2 = true;
                         image.Uri = null;
                         image.BufferView = bufferViewIndex;
-                        image.MimeType = GetMimeTypeFromFileName(fileInfo.Name);
+                        image.MimeType = mimeType;
                         concatBufferLegth += fileInfo.Length;
                         files2embed.Add(fileInfo);
                     }
                     imagesToken.Replace(JToken.FromObject(images, serializer));
+                }
+
+                // KHR_texture_basisu: when KTX2 images are present, declare the extension
+                // and rewrite texture references to use the extension instead of direct "source"
+                if (hasKtx2)
+                {
+                    var extName = "KHR_texture_basisu";
+                    o["extensionsUsed"] = new JArray(extName);
+                    o["extensionsRequired"] = new JArray(extName);
+
+                    var texturesToken = o.SelectToken("textures");
+                    if (texturesToken != null)
+                    {
+                        foreach (var tex in texturesToken.Children<JObject>())
+                        {
+                            var sourceVal = tex["source"];
+                            if (sourceVal != null)
+                            {
+                                var sourceIndex = sourceVal.Value<int>();
+                                // Check if the referenced image is KTX2
+                                var imgArray = o.SelectToken("images") as JArray;
+                                if (imgArray != null && sourceIndex < imgArray.Count)
+                                {
+                                    var imgMime = imgArray[sourceIndex]?["mimeType"]?.Value<string>();
+                                    if (imgMime == "image/ktx2")
+                                    {
+                                        tex.Remove("source");
+                                        tex["extensions"] = new JObject
+                                        {
+                                            [extName] = new JObject { ["source"] = sourceIndex }
+                                        };
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
 
                 bufferViewsToken.Replace(JToken.FromObject(bufferViews, serializer));

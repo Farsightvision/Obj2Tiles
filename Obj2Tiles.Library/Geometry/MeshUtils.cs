@@ -7,12 +7,14 @@ namespace Obj2Tiles.Library.Geometry;
 
 public class MeshUtils
 {
-    public static IMesh LoadMesh(string fileName, bool saveVertexColor, bool saveUv, double packingThreshold, double textureQuality)
+    public static IMesh LoadMesh(string fileName, bool saveVertexColor, bool saveUv, double packingThreshold, double textureQuality,
+        int jpegQuality = 90, int maxAtlasSize = 4096)
     {
-        return LoadMesh(fileName, saveVertexColor, saveUv, packingThreshold, textureQuality, out _);
+        return LoadMesh(fileName, saveVertexColor, saveUv, packingThreshold, textureQuality, out _, jpegQuality, maxAtlasSize);
     }
-    
-    public static IMesh LoadMesh(string fileName, bool saveVertexColor, bool saveUv, double packingThreshold, double textureQuality, out string[] dependencies)
+
+    public static IMesh LoadMesh(string fileName, bool saveVertexColor, bool saveUv, double packingThreshold, double textureQuality, out string[] dependencies,
+        int jpegQuality = 90, int maxAtlasSize = 4096)
     {
         using var reader = new StreamReader(fileName);
 
@@ -139,7 +141,7 @@ public class MeshUtils
         dependencies = deps.ToArray();
 
         return textureVertices.Count != 0
-            ? new MeshT(vertices, textureVertices, facesT, materials, saveVertexColor, saveUv, packingThreshold, textureQuality)
+            ? new MeshT(vertices, textureVertices, facesT, materials, saveVertexColor, saveUv, packingThreshold, textureQuality, jpegQuality, maxAtlasSize)
             : new Mesh(vertices, faces);
     }
 

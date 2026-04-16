@@ -1,4 +1,5 @@
-﻿using System.Diagnostics;
+﻿using System.Collections.Concurrent;
+using System.Diagnostics;
 using Obj2Tiles.Library;
 using Obj2Tiles.Library.Geometry;
 using Obj2Tiles.Library.Materials;
@@ -10,29 +11,34 @@ public static partial class StagesFacade
     public static Dictionary<LodConfig, List<IMesh>> Split(
         string[] sourceFiles,
         string destFolder,
-        int divisions,
+        int maxVerticesPerTile,
         Box3 bounds,
         double packingThreshold,
         LodConfig[] lodConfigs,
         int threadsCount,
         int maxTotalAtlasArea)
     {
-        var results = new Dictionary<LodConfig, List<IMesh>>();
+        var results = new ConcurrentDictionary<LodConfig, List<IMesh>>();
         var lod0File = sourceFiles[0];
-        var mesh = MeshUtils.LoadMesh(lod0File, false, true, packingThreshold, lodConfigs[0].Quality, out _);
-        var tileSize = MeshUtils.CalculateOptimalTileSize(mesh, divisions);
+        var mesh = MeshUtils.LoadMesh(lod0File, false, true, packingThreshold, lodConfigs[0].Quality, out _, lodConfigs[0].JpegQuality, lodConfigs[0].MaxAtlasSize);
+        var tileSize = MeshUtils.CalculateOptimalTileSize(mesh, maxVerticesPerTile);
 
-        for (var index = 0; index < sourceFiles.Length; index++)
+        // Process all LODs in parallel - each LOD works on its own files and output directory
+        var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = lodConfigs.Length };
+        Parallel.For(0, sourceFiles.Length, parallelOptions, index =>
         {
             var lod = lodConfigs[index];
             var file = sourceFiles[index];
             var dest = Path.Combine(destFolder, "LOD-" + index);
 
             var meshes = Split(file, dest, tileSize, packingThreshold, lod, bounds, SplitPointStrategy.VertexBaricenter, maxTotalAtlasArea);
-            results.Add(lod, meshes);
-        }
+            results[lod] = meshes;
+        });
 
-        return results;
+        // Clear texture cache once after all LODs are processed
+        TexturesCache.Clear();
+
+        return new Dictionary<LodConfig, List<IMesh>>(results);
     }
 
     public static List<IMesh> Split(string sourcePath, string destPath, double tileSize,
@@ -45,7 +51,7 @@ public static partial class StagesFacade
         Console.WriteLine($" -> Loading OBJ file \"{sourcePath}\"");
 
         sw.Start();
-        var sourceMesh = MeshUtils.LoadMesh(sourcePath, lod.SaveVertexColor, lod.SaveUv, packingThreshold, lod.Quality, out _);
+        var sourceMesh = MeshUtils.LoadMesh(sourcePath, lod.SaveVertexColor, lod.SaveUv, packingThreshold, lod.Quality, out _, lod.JpegQuality, lod.MaxAtlasSize);
 
         Console.WriteLine(
             $" ?> Loaded {sourceMesh.VertexCount} vertices, {sourceMesh.FacesCount} faces in {sw.ElapsedMilliseconds}ms");
@@ -66,22 +72,23 @@ public static partial class StagesFacade
         if (sourceMesh is MeshT sourceMeshT)
         {
             Console.WriteLine(" -> Prepare Repack Textures");
-            
+
             var meshTs = meshes.Cast<MeshT>().ToList();
-        
+
             for (var i = 0; i < meshTs.Count; i++)
             {
                 var meshT = meshTs[i];
-                var path = Path.Combine(destPath, $"{meshT.Name}.obj");
-                meshT.FilePath = path;
-                meshT.PrepareRepackTextures();
+                meshT.FilePath = Path.Combine(destPath, $"{meshT.Name}.obj");
             }
-            
-            Console.WriteLine(" -> Prepare Repack Textures");
-            
+
+            // Each mesh independently computes clusters and atlas sizing
+            Parallel.ForEach(meshTs, meshT => meshT.PrepareRepackTextures());
+
+            Console.WriteLine($" ?> Prepared {meshTs.Count} atlas layouts");
+
             var currentBatch = new List<MeshT>();
             long currentSize = 0;
-        
+
             for (var i = 0; i < meshTs.Count; i++)
             {
                 var meshT = meshTs[i];
@@ -98,30 +105,27 @@ public static partial class StagesFacade
                 currentBatch.Add(meshT);
                 currentSize += atlasSize;
             }
-            
+
             if (currentBatch.Count > 0)
             {
                 ProcessBatch(currentBatch, sourceMeshT.Materials);
             }
-            
+
             Console.WriteLine(" -> Write Geometry");
-            
-            for (var i = 0; i < meshTs.Count; i++)
-            {
-                var meshT = meshTs[i];
-                meshT.WriteGeometry();
-            }
+
+            // WriteGeometry in parallel - each mesh writes its own independent OBJ file
+            Parallel.ForEach(meshTs, meshT => meshT.WriteGeometry());
         }
         else
         {
             Console.WriteLine(" -> Writing tiles");
-            
-            for (var i = 0; i < meshes.Count; i++)
+
+            // Write OBJ files in parallel
+            Parallel.ForEach(meshes, mesh =>
             {
-                var mesh = meshes[i];
                 var path = Path.Combine(destPath, $"{mesh.Name}.obj");
                 mesh.WriteObj(path);
-            }
+            });
         }
 
         Console.WriteLine($" ?> {meshes.Count} tiles written in {sw.ElapsedMilliseconds}ms");
@@ -131,25 +135,17 @@ public static partial class StagesFacade
     private static void ProcessBatch(List<MeshT> meshTs, IReadOnlyList<Material> materials)
     {
         Console.WriteLine($"Fill and save Atlases count {meshTs.Count}");
-        
+
         for (var i = 0; i < materials.Count; i++)
         {
             var material = materials[i];
 
-            for (var j = 0; j < meshTs.Count; j++)
-            {
-                var meshT = meshTs[j];
-                meshT.FillAtlases(material);
-            }
-            
-            TexturesCache.Clear();
+            // FillAtlases in parallel per mesh - each mesh writes to its own private atlas,
+            // source textures from cache are read-only (thread-safe ConcurrentDictionary reads)
+            Parallel.ForEach(meshTs, meshT => meshT.FillAtlases(material));
         }
 
-        for (var j = 0; j < meshTs.Count; j++)
-        {
-            var meshT = meshTs[j];
-            meshT.SaveAtlasesAndUpdateMaterial();
-        }
+        Parallel.ForEach(meshTs, meshT => meshT.SaveAtlasesAndUpdateMaterial());
     }
 }
 

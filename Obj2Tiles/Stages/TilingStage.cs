@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Text;
 using Newtonsoft.Json;
 using Obj2Tiles.Library.Geometry;
@@ -21,25 +21,10 @@ public static partial class StagesFacade
             Console.WriteLine(" ?> Using default coordinates");
             coords = DefaultGpsCoords;
         }
-       
-        // Don't ask me why 100, I have no idea but it works
-        // https://github.com/CesiumGS/3d-tiles/issues/162
-        //const int baseError = 100;
 
-        // Generate tileset.json
-        var tileset = new Tileset
-        {
-            Asset = new Asset { Version = "1.0" },
-            GeometricError = baseError,
-            Root = new TileElement
-            {
-                GeometricError = baseError,
-                Refine = "ADD",
-                Transform = coords.ToEcefTransform(),
-                Children = new List<TileElement>()
-            }
-        };
+        var masterDescriptors = boundsMapper[0].Keys;
 
+        // Accumulate global bounds
         var maxX = double.MinValue;
         var minX = double.MaxValue;
         var maxY = double.MinValue;
@@ -47,46 +32,58 @@ public static partial class StagesFacade
         var maxZ = double.MinValue;
         var minZ = double.MaxValue;
 
-        var masterDescriptors = boundsMapper[0].Keys;
-        
+        foreach (var descriptor in masterDescriptors)
+        {
+            for (var lod = lods - 1; lod >= 0; lod--)
+            {
+                if (!boundsMapper[lod].ContainsKey(descriptor)) continue;
+
+                var box3 = boundsMapper[lod][descriptor];
+                if (box3.Min.X < minX) minX = box3.Min.X;
+                if (box3.Max.X > maxX) maxX = box3.Max.X;
+                if (box3.Min.Y < minY) minY = box3.Min.Y;
+                if (box3.Max.Y > maxY) maxY = box3.Max.Y;
+                if (box3.Min.Z < minZ) minZ = box3.Min.Z;
+                if (box3.Max.Z > maxZ) maxZ = box3.Max.Z;
+            }
+        }
+
+        var globalBox = new Box3(minX, minY, minZ, maxX, maxY, maxZ);
+
+        // Scale root error to model size so LOD transitions work at any scale
+        var modelDiagonal = Math.Sqrt(globalBox.Width * globalBox.Width + globalBox.Height * globalBox.Height + globalBox.Depth * globalBox.Depth);
+        var rootError = Math.Max(baseError, modelDiagonal * 10);
+
+        Console.WriteLine($" ?> Model diagonal: {modelDiagonal:F0}m, rootError: {rootError:F0}");
+
+        // Build tileset hierarchy
+        var tileset = new Tileset
+        {
+            Asset = new Asset { Version = "1.0" },
+            GeometricError = rootError,
+            Root = new TileElement
+            {
+                GeometricError = rootError,
+                Refine = "REPLACE",
+                Transform = coords.ToEcefTransform(),
+                BoundingVolume = globalBox.ToBoundingVolume(),
+                Children = new List<TileElement>()
+            }
+        };
+
         foreach (var descriptor in masterDescriptors)
         {
             var currentTileElement = tileset.Root;
-            
-            var refBox = boundsMapper[0][descriptor];
 
             for (var lod = lods - 1; lod >= 0; lod--)
             {
-                // Check if this descriptor exists in this LOD
-                if (!boundsMapper[lod].ContainsKey(descriptor))
-                {
-                    // Skip this LOD if the mesh doesn't exist
-                    continue;
-                }
+                if (!boundsMapper[lod].ContainsKey(descriptor)) continue;
 
                 var box3 = boundsMapper[lod][descriptor];
 
-                if (box3.Min.X < minX)
-                    minX = box3.Min.X;
-
-                if (box3.Max.X > maxX)
-                    maxX = box3.Max.X;
-
-                if (box3.Min.Y < minY)
-                    minY = box3.Min.Y;
-
-                if (box3.Max.Y > maxY)
-                    maxY = box3.Max.Y;
-
-                if (box3.Min.Z < minZ)
-                    minZ = box3.Min.Z;
-
-                if (box3.Max.Z > maxZ)
-                    maxZ = box3.Max.Z;
-
                 var tile = new TileElement
                 {
-                    GeometricError = lod == 0 ? 0 : CalculateGeometricError(refBox, box3, lod),
+                    GeometricError = lod == 0 ? 0 : CalculateTileGeometricError(box3, lod, lods),
                     Refine = "REPLACE",
                     Children = new List<TileElement>(),
                     Content = new Content
@@ -101,24 +98,23 @@ public static partial class StagesFacade
             }
         }
 
-        var globalBox = new Box3(minX, minY, minZ, maxX, maxY, maxZ);
-
-        tileset.Root.BoundingVolume = globalBox.ToBoundingVolume();
-
         File.WriteAllText(Path.Combine(destPath, "tileset.json"),
             JsonConvert.SerializeObject(tileset, Formatting.Indented));
     }
 
-    // Calculate mesh geometric error
-    private static double CalculateGeometricError(Box3 refBox, Box3 box, int lod)
+    /// <summary>
+    /// Per-tile geometric error based on the tile's AABB half-diagonal.
+    /// Ensures error is proportional to the tile's spatial size — small tiles
+    /// only refine when the camera is close, large tiles refine sooner.
+    /// </summary>
+    private static double CalculateTileGeometricError(Box3 box, int lod, int totalLods)
     {
-
-        var dW = Math.Abs(refBox.Width - box.Width) / box.Width + 1;
-        var dH = Math.Abs(refBox.Height - box.Height) / box.Height + 1;
-        var dD = Math.Abs(refBox.Depth - box.Depth) / box.Depth + 1;
-       
-        return Math.Pow(dW + dH + dD, lod);
-
+        var dx = box.Width;
+        var dy = box.Height;
+        var dz = box.Depth;
+        var halfDiagonal = 0.5 * Math.Sqrt(dx * dx + dy * dy + dz * dz);
+        var fraction = (double)lod / (totalLods - 1);
+        return halfDiagonal * fraction * fraction;
     }
 
     private static void ConvertAllB3dm(string sourcePath, string destPath, int lods)
@@ -146,7 +142,6 @@ public static partial class StagesFacade
         });
     }
 
-    // Where is it?
     private static readonly GpsCoords DefaultGpsCoords = new()
     {
         Altitude = 0,

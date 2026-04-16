@@ -64,6 +64,15 @@ namespace Obj2Tiles
                 Console.WriteLine(" ?> Splitting stage done in {0}", sw.Elapsed);
                 Console.WriteLine();
 
+                if (config.UseKtxTextures)
+                {
+                    sw.Restart();
+                    Console.WriteLine(" ?> Compressing png to ktx2");
+                    await StagesFacade.Compress(meshes, config.ThreadsCount);
+                    Console.WriteLine(" ?> Compressing done in {0}", sw.Elapsed);
+                    Console.WriteLine();
+                }
+
                 sw.Restart();
                 Console.WriteLine(" ?> Converting to glb");
                 await StagesFacade.Convert(destFolderSplit, config.Output, config.LODs, config.ThreadsCount);
@@ -146,6 +155,7 @@ namespace Obj2Tiles
                 ThreadsCount = options.ThreadsCount,
                 MaxTotalAtlasArea = options.MaxTotalAtlasArea,
                 KeepIntermediateFiles = options.KeepIntermediateFiles,
+                UseKtxTextures = options.UseKtxTextures,
                 BaseError = options.BaseError,
                 Latitude = options.Latitude,
                 Longitude = options.Longitude,
