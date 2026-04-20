@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 
@@ -16,6 +16,13 @@ public static class TexturesCache
         var lazy = Textures.GetOrAdd(textureName,
             key => new Lazy<Image<Rgba32>>(() => Image.Load<Rgba32>(key)));
         return lazy.Value;
+    }
+
+    public static void EvictTexture(string? textureName)
+    {
+        if (string.IsNullOrEmpty(textureName)) return;
+        if (Textures.TryRemove(textureName, out var lazy) && lazy.IsValueCreated)
+            lazy.Value.Dispose();
     }
 
     public static void Clear()

@@ -1,5 +1,4 @@
-﻿using System.Collections.Concurrent;
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using Obj2Tiles.Library;
 using Obj2Tiles.Library.Geometry;
 using Obj2Tiles.Library.Materials;
@@ -18,27 +17,24 @@ public static partial class StagesFacade
         int threadsCount,
         int maxTotalAtlasArea)
     {
-        var results = new ConcurrentDictionary<LodConfig, List<IMesh>>();
+        var results = new Dictionary<LodConfig, List<IMesh>>();
         var lod0File = sourceFiles[0];
         var mesh = MeshUtils.LoadMesh(lod0File, false, true, packingThreshold, lodConfigs[0].Quality, out _, lodConfigs[0].JpegQuality, lodConfigs[0].MaxAtlasSize);
         var tileSize = MeshUtils.CalculateOptimalTileSize(mesh, maxVerticesPerTile);
 
-        // Process all LODs in parallel - each LOD works on its own files and output directory
-        var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = lodConfigs.Length };
-        Parallel.For(0, sourceFiles.Length, parallelOptions, index =>
+        for (var index = 0; index < sourceFiles.Length; index++)
         {
             var lod = lodConfigs[index];
             var file = sourceFiles[index];
             var dest = Path.Combine(destFolder, "LOD-" + index);
 
             var meshes = Split(file, dest, tileSize, packingThreshold, lod, bounds, SplitPointStrategy.VertexBaricenter, maxTotalAtlasArea);
-            results[lod] = meshes;
-        });
+            results.Add(lod, meshes);
+        }
 
-        // Clear texture cache once after all LODs are processed
         TexturesCache.Clear();
 
-        return new Dictionary<LodConfig, List<IMesh>>(results);
+        return results;
     }
 
     public static List<IMesh> Split(string sourcePath, string destPath, double tileSize,
@@ -143,6 +139,9 @@ public static partial class StagesFacade
             // FillAtlases in parallel per mesh - each mesh writes to its own private atlas,
             // source textures from cache are read-only (thread-safe ConcurrentDictionary reads)
             Parallel.ForEach(meshTs, meshT => meshT.FillAtlases(material));
+
+            TexturesCache.EvictTexture(material.Texture);
+            TexturesCache.EvictTexture(material.NormalMap);
         }
 
         Parallel.ForEach(meshTs, meshT => meshT.SaveAtlasesAndUpdateMaterial());
