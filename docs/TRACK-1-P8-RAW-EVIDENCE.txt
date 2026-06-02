@@ -1,0 +1,43 @@
+# Track-1 P8 raw bake evidence (decode-once capped-resident cache)
+# Generated Fri May 29 15:24:15 UTC 2026 — branch feat/perf-optim-8-decode-once-cap
+
+=== /tmp/spike-small2.log ===
+{"Input":"/home/terrarium/work/small2-fixture/odm_textured_model_geo.obj","Output":"/tmp/spike-small2","MaxVerticesPerTile":1000,"PackingThreshold":0.618,"KeepIntermediateFiles":false,"LODs":[{"Quality":1.0,"SaveVertexColor":false,"SaveUv":true,"KtxQuality":0,"KtxCompressionLevel":0,"JpegQuality":90,"MaxAtlasSize":4096}],"ThreadsCount":8,"UseKtxTextures":false,"MaxTotalAtlasArea":2147483647,"BaseError":100.0,"HierarchicalLods":true,"ForceZSplit":false,"NoMeshoptCompression":false,"Latitude":45.46424200394995,"Longitude":9.190277486808588,"Altitude":0.0,"Scale":1.0,"YUpToZUp":true,"MaxAtlasSize":4096,"SourceCacheCap":4096,"MaxAtlasSizeInternal":2048,"AtlasMaxDepthSchedule":{"0":512,"1":1024,"2":1536,"3":2048,"4":4096},"UserProvidedLods":false,"AutoDepth":true,"TLeafTri":25000,"TLeafTextureBytes":50000000,"NoAdaptiveExtend":true,"AdaptiveExtendMaxDepth":0,"LeafVramBudgetMb":0,"MaxTileCount":0,"AtlasUnsharpAmount":0.0,"LeafNoMips":true,"MaxDepthOverride":0,"QuantizeGlbs":false,"GltfpackPath":"","Ktx2Hierarchical":false,"Ktx2Quality":8,"MeshoptCompress":false,"AtlasStrategy":0,"AtlasLeafDensityPxPerM":512,"AtlasUseSourceDetailFloor":true,"AtlasMinSize":256,"AtlasSourceDetailCapPxPerM":1024,"TextureErrorFactor":16.0,"ParallelPhase1":false,"Phase1BatchesPerMaterial":0}
+ -> SourceCacheCap: decode-once, downsample sources to <= 4096px, hold resident (no per-chunk Clear)
+[perf:hlod:Phase1_AtlasWrite] elapsed=11008ms tiles=21 mode=parallel:4:chunks=3
+[perf:hlod:DecodeStats] actualDecodes=16 totalDecodeMs=2170
+[perf:hlod:Phase1_Breakdown] ctor=20ms prepare=7784ms fillAtlases=5506ms saveAtlases=15567ms writeGeom=847ms cpu_sum_ms
+[perf:hlod:PipelineTotal] elapsed=25757ms
+
+=== /tmp/spike-hd.log ===
+{"Input":"/home/terrarium/work/high-detailed-fixture/odm_textured_model_geo.obj","Output":"/tmp/spike-hd","MaxVerticesPerTile":1000,"PackingThreshold":0.618,"KeepIntermediateFiles":false,"LODs":[{"Quality":1.0,"SaveVertexColor":false,"SaveUv":true,"KtxQuality":0,"KtxCompressionLevel":0,"JpegQuality":90,"MaxAtlasSize":4096}],"ThreadsCount":8,"UseKtxTextures":false,"MaxTotalAtlasArea":2147483647,"BaseError":100.0,"HierarchicalLods":true,"ForceZSplit":false,"NoMeshoptCompression":false,"Latitude":45.46424200394995,"Longitude":9.190277486808588,"Altitude":0.0,"Scale":1.0,"YUpToZUp":true,"MaxAtlasSize":4096,"SourceCacheCap":4096,"MaxAtlasSizeInternal":2048,"AtlasMaxDepthSchedule":{"0":512,"1":1024,"2":1536,"3":2048,"4":4096},"UserProvidedLods":false,"AutoDepth":true,"TLeafTri":25000,"TLeafTextureBytes":50000000,"NoAdaptiveExtend":true,"AdaptiveExtendMaxDepth":0,"LeafVramBudgetMb":0,"MaxTileCount":0,"AtlasUnsharpAmount":0.0,"LeafNoMips":true,"MaxDepthOverride":0,"QuantizeGlbs":false,"GltfpackPath":"","Ktx2Hierarchical":false,"Ktx2Quality":8,"MeshoptCompress":false,"AtlasStrategy":0,"AtlasLeafDensityPxPerM":512,"AtlasUseSourceDetailFloor":true,"AtlasMinSize":256,"AtlasSourceDetailCapPxPerM":1024,"TextureErrorFactor":16.0,"ParallelPhase1":false,"Phase1BatchesPerMaterial":0}
+ -> SourceCacheCap: decode-once, downsample sources to <= 4096px, hold resident (no per-chunk Clear)
+[perf:hlod:Phase1_AtlasWrite] elapsed=68438ms tiles=53 mode=parallel:4:chunks=7
+[perf:hlod:DecodeStats] actualDecodes=84 totalDecodeMs=52897
+[perf:hlod:Phase1_Breakdown] ctor=8ms prepare=61898ms fillAtlases=93852ms saveAtlases=46412ms writeGeom=951ms cpu_sum_ms
+[perf:hlod:PipelineTotal] elapsed=86491ms
+
+=== /tmp/spike-vlrg.log ===
+{"Input":"/home/terrarium/work/very-large-fixture/odm_textured_model_geo.obj","Output":"/tmp/spike-vlrg","MaxVerticesPerTile":1000,"PackingThreshold":0.618,"KeepIntermediateFiles":false,"LODs":[{"Quality":1.0,"SaveVertexColor":false,"SaveUv":true,"KtxQuality":0,"KtxCompressionLevel":0,"JpegQuality":90,"MaxAtlasSize":4096}],"ThreadsCount":8,"UseKtxTextures":false,"MaxTotalAtlasArea":2147483647,"BaseError":100.0,"HierarchicalLods":true,"ForceZSplit":false,"NoMeshoptCompression":false,"Latitude":45.46424200394995,"Longitude":9.190277486808588,"Altitude":0.0,"Scale":1.0,"YUpToZUp":true,"MaxAtlasSize":4096,"SourceCacheCap":4096,"MaxAtlasSizeInternal":2048,"AtlasMaxDepthSchedule":{"0":512,"1":1024,"2":1536,"3":2048,"4":4096},"UserProvidedLods":false,"AutoDepth":true,"TLeafTri":25000,"TLeafTextureBytes":50000000,"NoAdaptiveExtend":true,"AdaptiveExtendMaxDepth":0,"LeafVramBudgetMb":0,"MaxTileCount":0,"AtlasUnsharpAmount":0.0,"LeafNoMips":true,"MaxDepthOverride":0,"QuantizeGlbs":false,"GltfpackPath":"","Ktx2Hierarchical":false,"Ktx2Quality":8,"MeshoptCompress":false,"AtlasStrategy":0,"AtlasLeafDensityPxPerM":512,"AtlasUseSourceDetailFloor":true,"AtlasMinSize":256,"AtlasSourceDetailCapPxPerM":1024,"TextureErrorFactor":16.0,"ParallelPhase1":false,"Phase1BatchesPerMaterial":0}
+ -> SourceCacheCap: decode-once, downsample sources to <= 4096px, hold resident (no per-chunk Clear)
+[perf:hlod:Phase1_AtlasWrite] elapsed=78999ms tiles=103 mode=parallel:4:chunks=13
+[perf:hlod:DecodeStats] actualDecodes=69 totalDecodeMs=72512
+[perf:hlod:Phase1_Breakdown] ctor=10ms prepare=37661ms fillAtlases=97798ms saveAtlases=136318ms writeGeom=1326ms cpu_sum_ms
+[perf:hlod:PipelineTotal] elapsed=121325ms
+
+=== D baselines (for A/B) ===
+--- PERF-D-hlod-small2 ---
+[perf:hlod:Phase1_AtlasWrite] elapsed=12976ms tiles=21 mode=parallel:4:chunks=3
+[perf:hlod:Phase1_Breakdown] ctor=3ms prepare=9372ms fillAtlases=12993ms saveAtlases=13961ms writeGeom=781ms cpu_sum_ms
+[perf:hlod:PipelineTotal] elapsed=28418ms
+--- PERF-D-hlod-hd ---
+[perf:hlod:Phase1_AtlasWrite] elapsed=358021ms tiles=53 mode=parallel:4:chunks=7
+[perf:hlod:Phase1_Breakdown] ctor=59ms prepare=240886ms fillAtlases=903336ms saveAtlases=183782ms writeGeom=2548ms cpu_sum_ms
+[perf:hlod:PipelineTotal] elapsed=379053ms
+--- PERF-D-hlod-vlrg ---
+[perf:hlod:Phase1_AtlasWrite] elapsed=1207709ms tiles=103 mode=parallel:2:chunks=26
+[perf:hlod:Phase1_Breakdown] ctor=50ms prepare=378783ms fillAtlases=1557245ms saveAtlases=163346ms writeGeom=2497ms cpu_sum_ms
+[perf:hlod:PipelineTotal] elapsed=1253489ms
+
+=== hd rendered A/B (tour.py quality, headless Cesium) SSIM ===
+01_top-r0.6 SSIM=0.948 meanAbs=4.5 ; 02_top-r0.20 0.923/3.9 ; 03_top-r0.15(close leaf) 0.947/3.6 ; 04_dolly-oblique 0.747/13.0(visually equiv) ; 06_edge 0.987/0.5

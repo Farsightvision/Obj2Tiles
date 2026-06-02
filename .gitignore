@@ -3,8 +3,30 @@ obj/
 /packages/
 riderModule.iml
 /_ReSharper.Caches/
-.vs/publish/
-.idea/Obj2Tiles.iml
-.idea/modules.xml
-.idea/vcs.xml
-.idea/workspace.xml
+
+# macOS metadata
+.DS_Store
+
+# Build output
+publish/
+
+# Agent/IDE state
+.ai/mcp/
+.claude/
+
+# IDE / VCS-local files
+.idea/
+.vs/
+.vscode/
+
+# Python venvs
+.venv/
+
+# Server-built native libs (rebuilt on each host via cmake)
+Obj2Tiles.Native/native/_build_*/
+Obj2Tiles.Native/native/runtimes/linux-x64/
+
+# vendored Cesium visual-test harness (do not track — restore via npm/CDN)
+tests/visual/viewer/cesium/Build/
+tests/visual/out/
+**/__pycache__/

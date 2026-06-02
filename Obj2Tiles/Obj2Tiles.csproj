@@ -10,12 +10,26 @@
         <FileVersion>1.0.13</FileVersion>
         <InvariantGlobalization>true</InvariantGlobalization>
         <Version>1.0.13</Version>
+        <!--
+          B.6 (Track B): Server GC. The default Workstation GC pauses ALL
+          threads during collection. With Parallel.ForEach Phase-1 atlas pack
+          (B.2) each tile heavily allocates (dictionaries/lists in
+          PrepareRepackTextures + atlas Rgba32 buffers), so GC stops the
+          world frequently and serialized our supposedly-parallel work.
+          B.5 measurement: PrepareRepackTextures CPU-sum 334s vs wall 325s
+          (~1.0x parallelism, despite Parallel.ForEach MaxDOP=8). Server GC
+          uses one GC thread per processor + per-core heaps, dramatically
+          reducing stop-the-world pauses.
+        -->
+        <ServerGarbageCollection>true</ServerGarbageCollection>
+        <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
     </PropertyGroup>
 
     <ItemGroup>
       <ProjectReference Include="..\MeshDecimatorCore\MeshDecimatorCore.csproj" />
       <ProjectReference Include="..\Obj2Gltf\Obj2Gltf.csproj" />
       <ProjectReference Include="..\Obj2Tiles.Library\Obj2Tiles.Library.csproj" />
+      <ProjectReference Include="..\Obj2Tiles.Native\Obj2Tiles.Native.csproj" />
     </ItemGroup>
 
     <ItemGroup>
