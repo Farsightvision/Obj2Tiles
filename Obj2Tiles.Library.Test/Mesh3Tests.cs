@@ -269,12 +269,43 @@ public class Mesh3Tests
     [Test]
     public void Orientation_TestBrighton()
     {
-        
+
         using var fs = new TestFS(BrightonTexturingTestUrl, nameof(Mesh3Tests));
 
         var mesh = (MeshT)MeshUtils.LoadMesh(Path.Combine(fs.TestFolder, "odm_textured_model_geo.obj"), false, true, 0.1f, 1f);
 
         var orientation = mesh.GetAverageOrientation();
 
+    }
+
+    /// <summary>
+    /// Regression: flat-grid callers historically omit a per-LOD atlas cap,
+    /// which LodConfig encodes as MaxAtlasSize = 0 (see Obj2Tiles/AppConfig.cs
+    /// LodConfig.MaxAtlasSize). The flat MeshT save path uses _maxAtlasSize as
+    /// a hard cap in SaveAtlasesAndUpdateMaterial:
+    ///     Math.Min(PreviousPowerOfTwo(width), _maxAtlasSize)
+    /// so a 0 collapses the atlas to a 0×0 image and ImageSharp.Resize throws
+    /// "Target width 0 and height 0 must be greater than zero." MeshT must
+    /// treat MaxAtlasSize &lt;= 0 as "use the built-in default" instead of
+    /// crashing — same guard the HLOD MeshT_Hlod path already has.
+    /// </summary>
+    [Test]
+    public void WriteObj_Cube_ZeroMaxAtlasSize_FallsBackToDefault()
+    {
+        var testPath = GetTestOutputPath(nameof(WriteObj_Cube_ZeroMaxAtlasSize_FallsBackToDefault));
+
+        // maxAtlasSize: 0 mirrors the flat pipeline's LodConfig default.
+        var mesh = (MeshT)MeshUtils.LoadMesh(
+            Path.Combine(TestDataPath, "cube/cube.obj"),
+            false, true, 0.1f, 1f, jpegQuality: 90, maxAtlasSize: 0);
+
+        // Before the fix this throws InvalidOperationException from the
+        // atlas resize; after the fix it writes a non-empty atlas.
+        mesh.WriteObj(Path.Combine(testPath, "mesh.obj"));
+
+        mesh.AtlasEdgeLength.Should().BeGreaterThan(0);
+
+        var atlas = Directory.GetFiles(testPath, "*-texture-diffuse-atlas.jpg");
+        atlas.Should().NotBeEmpty("the flat atlas save path must emit a texture atlas");
     }
 }

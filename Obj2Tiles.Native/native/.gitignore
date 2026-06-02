@@ -1,0 +1,6 @@
+# CMake build cache directories produced by build.sh / build.ps1
+_build_*/
+
+# Native shared libraries built locally per host RID.
+# Each developer/CI runs build.sh (or build.ps1) to populate this.
+runtimes/

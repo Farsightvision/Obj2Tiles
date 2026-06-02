@@ -47,6 +47,10 @@
     <PackageReference Remove="@(PackageReference)" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\Obj2Tiles.Native\Obj2Tiles.Native.csproj" />
+  </ItemGroup>
+
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
 
 

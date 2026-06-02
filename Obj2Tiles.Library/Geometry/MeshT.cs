@@ -63,7 +63,16 @@ public class MeshT : IMesh
         _packingThreshold = packingThreshold;
         _textureQuality = textureQuality;
         _jpegQuality = jpegQuality;
-        _maxAtlasSize = maxAtlasSize;
+        // Regression guard: the flat-grid pipeline's LodConfig defaults
+        // MaxAtlasSize to 0 ("no explicit cap; use the built-in default"), and
+        // SplitStage passes that value through verbatim. _maxAtlasSize is used
+        // as a HARD cap in SaveAtlasesAndUpdateMaterial
+        // (Math.Min(PreviousPowerOfTwo(width), _maxAtlasSize)), so a literal 0
+        // collapses the atlas to a 0x0 image and ImageSharp.Resize throws
+        // "Target width 0 and height 0 must be greater than zero." Treat
+        // <= 0 as "use the default" — this guard was added in d5ecaf6 and
+        // dropped by the *_Hlod split (6f9cd91); MeshT_Hlod keeps it.
+        _maxAtlasSize = maxAtlasSize > 0 ? maxAtlasSize : DefaultMaxAtlasSize;
         _vertices = [..vertices];
         _textureVertices = [..textureVertices];
         _faces = [..faces];

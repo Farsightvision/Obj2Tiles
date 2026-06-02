@@ -1,0 +1,337 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Obj2Tiles visual+perf harness — Cesium viewer</title>
+  <link rel="stylesheet" href="cesium/Build/Cesium/Widgets/widgets.css" />
+  <script src="cesium/Build/Cesium/Cesium.js"></script>
+  <style>
+    html, body, #cesiumContainer { width: 100%; height: 100%; margin: 0; padding: 0;
+      overflow: hidden; background: #000; }
+  </style>
+</head>
+<body>
+  <div id="cesiumContainer"></div>
+  <script>
+    Cesium.Ion.defaultAccessToken = "";
+
+    const viewer = new Cesium.Viewer("cesiumContainer", {
+      imageryProvider: false,
+      terrainProvider: new Cesium.EllipsoidTerrainProvider(),
+      animation: false, timeline: false, baseLayerPicker: false,
+      geocoder: false, homeButton: false, infoBox: false,
+      sceneModePicker: false, navigationHelpButton: false, selectionIndicator: false,
+      fullscreenButton: false,
+    });
+    viewer.scene.backgroundColor = Cesium.Color.BLACK;
+    viewer.scene.skyBox.show = false;
+    viewer.scene.skyAtmosphere.show = false;
+    viewer.scene.globe.show = false;
+    window.viewer = viewer;
+    window.tileset = null;
+    window.__settled = false;
+
+    // --- frame interval recorder (for FPS) -------------------------------------
+    const frameIntervals = [];
+    let lastFrameTime = performance.now();
+    function tickFrame(now) {
+      const dt = now - lastFrameTime;
+      lastFrameTime = now;
+      frameIntervals.push(dt);
+      if (frameIntervals.length > 1000) frameIntervals.shift();
+      requestAnimationFrame(tickFrame);
+    }
+    requestAnimationFrame(tickFrame);
+
+    // --- tile load tracking ----------------------------------------------------
+    let firstTileTime = null;
+    let pageLoadTime = performance.now();
+    let tilesLoaded = 0;
+    let tileBytes = 0;
+    let requestCount = 0;
+    let failedRequestCount = 0;
+    let lastLoadProgressZeroAt = null;
+    let settledAt = null;
+
+    // --- tileset URL + debug flag from query string ---------------------------
+    const params = new URLSearchParams(window.location.search);
+    const tilesetUrl = params.get("tileset");
+    const debugMode = params.get("debug") === "1";
+    // SSE matches the React viewer's assumed default. Cesium3DTileset default
+    // maximumScreenSpaceError = 16. Override via ?sse=N (tour.py --sse).
+    // Source: https://cesium.com/learn/cesiumjs/ref-doc/Cesium3DTileset.html
+    const sse = parseFloat(params.get("sse") || "16");
+    // Cache budget (bytes). Default 800 MB to match 3d-tiles-renderer's
+    // LRUCache.lruBytesLimit, which is what the production React viewer uses.
+    // Cesium tightens to this with maximumCacheOverflowBytes=0 → memoryAdjustedSSE
+    // bumps above maximumScreenSpaceError when the cache cannot hold the working set.
+    const cacheBytes = parseInt(params.get("cacheBytes") || String(800 * 1024 * 1024), 10);
+
+    // --- debug overlay (boundary wireframes + filename labels) ----------------
+    // Mirrors react-3d-tiles-viewer/src/pages/CesiumPage.jsx pattern: native
+    // debugShowBoundingVolume for the OBB outline, plus a LabelCollection
+    // primitive populated from tileVisible + postRender for the per-tile names.
+    let labelCollection = null;
+    const visibleTiles = new Set();
+    let lastVisibleSig = "";
+
+    function getTileContentPath(tile) {
+      const url =
+        tile?._contentResource?._url ||
+        tile?.content?._resource?._url ||
+        tile?._header?.content?.uri || "";
+      const withoutQuery = url.split("?")[0];
+      // Show everything after "/content/" so the label uniquely identifies the
+      // tile (e.g. "5/12/8.glb"). Fall back to the last segment if the URL has
+      // no /content/ marker.
+      const idx = withoutQuery.indexOf("/content/");
+      if (idx !== -1) return withoutQuery.slice(idx + "/content/".length);
+      const segs = withoutQuery.split("/");
+      return segs[segs.length - 1] || "tile";
+    }
+
+    function getTileLodLabel(tile) {
+      const path = getTileContentPath(tile);
+      const m = path.match(/^(\d+)\//);
+      return m ? `L${m[1]}` : null;
+    }
+
+    if (tilesetUrl) {
+      Cesium.Cesium3DTileset.fromUrl(tilesetUrl, {
+        cacheBytes,
+        maximumCacheOverflowBytes: 0,  // strict ceiling — degrade SSE rather than overflow
+      }).then(tileset => {
+        window.tileset = tileset;
+        tileset.maximumScreenSpaceError = sse;
+        viewer.scene.primitives.add(tileset);
+        window.__settled = false;  // defensive reset
+        viewer.zoomTo(tileset);
+
+        // TEXGE diagnostic: always track which tiles are visible THIS frame +
+        // their geometricError, so __visibleTileList() can identify the specific
+        // tile whose SSE sits just under maxSSE (the blurry-coarse one).
+        window.__visTiles = new Map();  // path -> {lod, ge, path}
+        tileset.tileVisible.addEventListener((tile) => {
+          const path = getTileContentPath(tile);
+          const lod = getTileLodLabel(tile);
+          window.__visTiles.set(path, { path, lod, ge: tile.geometricError });
+        });
+        viewer.scene.preRender.addEventListener(() => { window.__visTiles.clear(); });
+        window.__visibleTileList = function () {
+          return Array.from(window.__visTiles.values())
+            .sort((a, b) => (a.lod || "").localeCompare(b.lod || "") || a.path.localeCompare(b.path));
+        };
+
+        if (debugMode) {
+          tileset.debugShowBoundingVolume = true;
+          labelCollection = viewer.scene.primitives.add(new Cesium.LabelCollection());
+          tileset.tileVisible.addEventListener((tile) => visibleTiles.add(tile));
+          viewer.scene.preRender.addEventListener(() => { visibleTiles.clear(); });
+          viewer.scene.postRender.addEventListener(() => {
+            const tiles = Array.from(visibleTiles);
+            const sig = tiles.map(t => `${t._frameNumber || 0}:${getTileContentPath(t)}`)
+                             .sort().join("|");
+            if (sig === lastVisibleSig) return;
+            lastVisibleSig = sig;
+            labelCollection.removeAll();
+            for (const tile of tiles) {
+              const path = getTileContentPath(tile);
+              const lod = getTileLodLabel(tile);
+              const text = lod ? `${lod} · ${path}` : path;
+              const center = tile.boundingSphere && tile.boundingSphere.center;
+              if (!center) continue;
+              labelCollection.add({
+                position: center,
+                text,
+                fillColor: Cesium.Color.fromBytes(80, 255, 160, 255),
+                showBackground: true,
+                backgroundColor: Cesium.Color.fromBytes(0, 0, 0, 180),
+                font: "12px sans-serif",
+                horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+                verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+                pixelOffset: new Cesium.Cartesian2(0, -8),
+                disableDepthTestDistance: Number.POSITIVE_INFINITY,
+              });
+            }
+          });
+        }
+
+        tileset.tileLoad.addEventListener((tile) => {
+          tilesLoaded++;
+          if (firstTileTime === null) firstTileTime = performance.now();
+          const content = tile.content;
+          if (content && content._resource && content._resource._request &&
+              content._resource._request.totalContentLength) {
+            tileBytes += content._resource._request.totalContentLength;
+          }
+        });
+        tileset.tileFailed.addEventListener(() => { failedRequestCount++; });
+        tileset.loadProgress.addEventListener((numberOfPendingRequests, numberOfTilesProcessing) => {
+          requestCount = Math.max(requestCount, tilesLoaded + numberOfPendingRequests);
+          if (numberOfPendingRequests === 0 && numberOfTilesProcessing === 0) {
+            if (lastLoadProgressZeroAt === null) lastLoadProgressZeroAt = performance.now();
+          } else {
+            lastLoadProgressZeroAt = null;
+          }
+        });
+      }).catch(err => console.error("Cesium3DTileset.fromUrl rejected:", err));
+    }
+
+    // --- settle watcher --------------------------------------------------------
+    // 2026-05-26 (memory-adjusted gate): in addition to tile-quiet + frame
+    // stability, require Cesium's memoryAdjustedScreenSpaceError to be stable
+    // for 1000ms. Under a tight cacheBytes ceiling, Cesium bumps this above
+    // maximumScreenSpaceError to drop deeper tiles when the working set can't
+    // fit. Waiting for it to plateau is the steady-state under memory pressure.
+    let memAdjustedHistory = [];  // [{ts, value}]
+    function recordMemAdjustedSSE() {
+      const t = window.tileset;
+      if (!t) return;
+      const v = (typeof t.memoryAdjustedScreenSpaceError === 'number')
+        ? t.memoryAdjustedScreenSpaceError
+        : t.maximumScreenSpaceError;
+      memAdjustedHistory.push({ ts: performance.now(), value: v });
+      if (memAdjustedHistory.length > 200) memAdjustedHistory.shift();
+    }
+    setInterval(recordMemAdjustedSSE, 100);
+
+    function checkSettled() {
+      if (window.__settled) return;
+      // If loadProgress never fired (e.g. camera change on already-loaded scene),
+      // check the tileset statistics directly and prime the idle clock.
+      if (lastLoadProgressZeroAt === null) {
+        const t = window.tileset;
+        if (t && t.statistics) {
+          const pending = t.statistics.numberOfPendingRequests || 0;
+          const processing = (t.statistics.numberOfTilesProcessing || 0);
+          if (pending === 0 && processing === 0) {
+            lastLoadProgressZeroAt = performance.now();
+          }
+        }
+        if (lastLoadProgressZeroAt === null) return;
+      }
+      const idleMs = performance.now() - lastLoadProgressZeroAt;
+      if (idleMs < 2000) return;
+      // Frame-stability check: last 60 intervals stddev ≤ 5ms (relaxed for headful)
+      if (frameIntervals.length < 60) return;
+      const recent = frameIntervals.slice(-60);
+      const mean = recent.reduce((a,b) => a+b, 0) / recent.length;
+      const variance = recent.reduce((a,b) => a + (b-mean)*(b-mean), 0) / recent.length;
+      const std = Math.sqrt(variance);
+      if (std > 5.0) return;
+      // Memory-adjusted SSE stability: last 1000ms of samples should vary by <0.1.
+      // This catches the case where Cesium is still nudging SSE up because the
+      // cache is over budget.
+      const now = performance.now();
+      const lastSec = memAdjustedHistory.filter(s => now - s.ts < 1000);
+      if (lastSec.length >= 5) {
+        const vals = lastSec.map(s => s.value);
+        const spread = Math.max(...vals) - Math.min(...vals);
+        if (spread > 0.1) return;
+      }
+      window.__settled = true;
+      settledAt = performance.now();
+    }
+    setInterval(checkSettled, 100);
+
+    // --- __perf API ------------------------------------------------------------
+    window.__perf = {
+      snapshotFps(durationMs) {
+        return new Promise(resolve => {
+          const startCount = frameIntervals.length;
+          const sleep = () => new Promise(r => setTimeout(r, durationMs));
+          sleep().then(() => {
+            const newIntervals = frameIntervals.slice(startCount);
+            if (newIntervals.length === 0) {
+              resolve({ fps_p50: 0, fps_p95: 0, frame_count: 0 });
+              return;
+            }
+            const sorted = [...newIntervals].sort((a,b) => a - b);
+            const p50_interval = sorted[Math.floor(sorted.length * 0.5)];
+            const p95_interval = sorted[Math.floor(sorted.length * 0.95)];
+            resolve({
+              fps_p50: 1000 / p50_interval,
+              fps_p95: 1000 / p95_interval,    // p95 of intervals = slow tail
+              frame_count: newIntervals.length,
+            });
+          });
+        });
+      },
+      loadMetrics() {
+        return {
+          time_to_first_tile_ms: firstTileTime ? (firstTileTime - pageLoadTime) : null,
+          time_to_settled_ms: settledAt ? (settledAt - pageLoadTime) : null,
+          tiles_loaded: tilesLoaded,
+          tile_bytes: tileBytes,
+          request_count: requestCount,
+          failed_request_count: failedRequestCount,
+        };
+      },
+      heapMb() {
+        if (performance.memory && performance.memory.usedJSHeapSize) {
+          return performance.memory.usedJSHeapSize / 1e6;
+        }
+        return null;
+      },
+      tileCountsThisFrame() {
+        const t = window.tileset;
+        if (!t || !t.statistics) return { selected: 0, visited: 0, requested: 0 };
+        return {
+          selected: t.statistics.numberOfTilesSelected || 0,
+          visited: t.statistics.visited || 0,
+          requested: t.statistics.numberOfPendingRequests || 0,
+        };
+      },
+      // 2026-05-26: memory-pressure diagnostics for the cache-budget A/B harness.
+      memDiag() {
+        const t = window.tileset;
+        if (!t) return { cacheBytes, totalMemoryUsageInBytes: 0,
+                          maximumScreenSpaceError: sse,
+                          memoryAdjustedScreenSpaceError: sse };
+        return {
+          cacheBytes,
+          totalMemoryUsageInBytes: t.totalMemoryUsageInBytes || 0,
+          maximumScreenSpaceError: t.maximumScreenSpaceError,
+          memoryAdjustedScreenSpaceError:
+            (typeof t.memoryAdjustedScreenSpaceError === 'number')
+              ? t.memoryAdjustedScreenSpaceError
+              : t.maximumScreenSpaceError,
+        };
+      },
+    };
+
+    // --- __setCamera -----------------------------------------------------------
+    window.__setCamera = function ({ heading_deg, pitch_deg, range, target_ecef }) {
+      window.__settled = false;
+      lastLoadProgressZeroAt = null;   // restart the settle clock
+      memAdjustedHistory = [];          // reset memory-adjusted SSE history
+      const target = new Cesium.Cartesian3(target_ecef[0], target_ecef[1], target_ecef[2]);
+      viewer.camera.lookAt(target, new Cesium.HeadingPitchRange(
+        Cesium.Math.toRadians(heading_deg),
+        Cesium.Math.toRadians(pitch_deg),
+        range
+      ));
+      return new Promise(resolve => requestAnimationFrame(() => resolve()));
+    };
+
+    // --- __setCameraDirect: exact ECEF pose (position+direction+up) ------------
+    // Used to reproduce an operator-supplied camera verbatim (TEXGE-V2 symptom A/B).
+    window.__setCameraDirect = function ({ position, direction, up }) {
+      window.__settled = false;
+      lastLoadProgressZeroAt = null;
+      memAdjustedHistory = [];
+      // lookAtTransform(IDENTITY) releases any lookAt reference frame so setView's
+      // ECEF vectors are applied in world space.
+      viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+      viewer.camera.setView({
+        destination: new Cesium.Cartesian3(position[0], position[1], position[2]),
+        orientation: {
+          direction: new Cesium.Cartesian3(direction[0], direction[1], direction[2]),
+          up: new Cesium.Cartesian3(up[0], up[1], up[2]),
+        },
+      });
+      return new Promise(resolve => requestAnimationFrame(() => resolve()));
+    };
+  </script>
+</body>
+</html>
