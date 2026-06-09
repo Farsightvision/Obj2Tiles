@@ -422,7 +422,9 @@ public static partial class HierarchicalTilingStage
                     new ParallelOptions { MaxDegreeOfParallelism = phase1Mdop },
                     n =>
                     {
-                        var p = PrepareTileForGlb(n, outputDir, isQuadtree, materials, config, maxDepth);
+                        // No-chunk path runs only when the resident set fits the budget,
+                        // so decode-once holds — no per-material eviction needed.
+                        var p = PrepareTileForGlb(n, outputDir, isQuadtree, materials, config, maxDepth, evictPerMaterial: false);
                         atlasEdges.Add((n.Depth, p.AtlasEdge));
                         preparedBag.Add(p);
                     });
@@ -439,12 +441,16 @@ public static partial class HierarchicalTilingStage
                     // last). reserve=0 — the live MemAvailable view already reflects the loaded cache.
                     // Degrades toward mdop=1 as RAM tightens; output-neutral (scheduling only).
                     int _chunkMdop = Phase1AdaptiveMdop(phase1Mdop, 0L, Obj2Tiles.Library.TexturesCache.MaxResidentEdge);
+                    // When the live-RAM clamp has made this chunk serial (mdop==1) there are no
+                    // concurrent tiles sharing the static cache, so per-material eviction is
+                    // dispose-safe AND needed to bound the resident set under memory pressure.
+                    bool evictPerMaterial = _chunkMdop == 1;
                     Parallel.ForEach(
                         chunk,
                         new ParallelOptions { MaxDegreeOfParallelism = _chunkMdop },
                         n =>
                         {
-                            var p = PrepareTileForGlb(n, outputDir, isQuadtree, materials, config, maxDepth);
+                            var p = PrepareTileForGlb(n, outputDir, isQuadtree, materials, config, maxDepth, evictPerMaterial);
                             atlasEdges.Add((n.Depth, p.AtlasEdge));
                             preparedBag.Add(p);
                         });
@@ -458,7 +464,9 @@ public static partial class HierarchicalTilingStage
         {
             foreach (var n in tiles)
             {
-                var p = PrepareTileForGlb(n, outputDir, isQuadtree, materials, config, maxDepth);
+                // Non-parallel serial path (config.ParallelPhase1 == false): evict per
+                // material as before (single-threaded, dispose-safe).
+                var p = PrepareTileForGlb(n, outputDir, isQuadtree, materials, config, maxDepth, evictPerMaterial: true);
                 atlasEdges.Add((n.Depth, p.AtlasEdge));
                 preparedBag.Add(p);
             }
@@ -775,7 +783,8 @@ public static partial class HierarchicalTilingStage
         bool isQuadtree,
         IReadOnlyList<Material> materials,
         AppConfig config,
-        int maxDepth)
+        int maxDepth,
+        bool evictPerMaterial)
     {
         string uri = n.Coord.ToContentUri(isQuadtree);
         string finalGlbPath = Path.Combine(outputDir, uri);
@@ -789,7 +798,7 @@ public static partial class HierarchicalTilingStage
         string gltfPath = Path.Combine(tempRoot, $"{tileName}.gltf");
 
         var (edge, packedMesh) = HierarchicalAtlasStage.PackAndWrite(
-            n.TileContentT!, materials, config, objPath, tileName, n.Depth, maxDepth, n.IsLeaf);
+            n.TileContentT!, materials, config, objPath, tileName, n.Depth, maxDepth, n.IsLeaf, evictPerMaterial);
         // The MeshT writes its OBJ via WriteGeometry; PackAndWrite already
         // ran SaveAtlasesAndUpdateMaterial so we just need the OBJ + MTL on
         // disk to feed Obj2Gltf. WriteGeometry also calls WriteMaterial.

@@ -7,7 +7,7 @@ namespace Obj2Tiles.Library;
 
 public static class TexturesCache
 {
-    private static readonly ConcurrentDictionary<string, Lazy<Image<Rgba32>>> Textures = new();
+    private static readonly ConcurrentDictionary<(string Path, int Cap), Lazy<Image<Rgba32>>> Textures = new();
     private static readonly ConcurrentDictionary<string, Lazy<ImageInfo>> TextureInfos = new();
 
     // Perf telemetry (NOT dead — feeds the [perf:hlod:DecodeStats] line in HierarchicalTilingStage):
@@ -38,24 +38,39 @@ public static class TexturesCache
     private static long _residentBytes;
     public static long ResidentBytes => System.Threading.Interlocked.Read(ref _residentBytes);
 
-    private static (int W, int H) CapDims(int w, int h)
+    /// <summary>
+    /// Effective decode cap for a per-tile request. When the resident cache is OFF
+    /// (MaxResidentEdge &lt;= 0, the small-model legacy path) the per-tile cap is IGNORED
+    /// and decode is full-res — byte-identical to today. When the cache is ON, the
+    /// effective cap is min(tileCap, MaxResidentEdge); tileCap &lt;= 0 means "use the global".
+    /// </summary>
+    private static int EffectiveCap(int tileCap)
     {
-        int cap = MaxResidentEdge;
+        if (MaxResidentEdge <= 0) return 0;                 // cache off -> uncapped (legacy)
+        if (tileCap <= 0) return MaxResidentEdge;           // no per-tile cap -> global
+        return System.Math.Min(tileCap, MaxResidentEdge);   // per-tile cap, bounded by global
+    }
+
+    private static (int W, int H) CapDims(int w, int h, int cap)
+    {
         if (cap <= 0 || System.Math.Max(w, h) <= cap) return (w, h);
         double s = (double)cap / System.Math.Max(w, h);
         return (System.Math.Max(1, (int)System.Math.Round(w * s)), System.Math.Max(1, (int)System.Math.Round(h * s)));
     }
 
-    public static Image<Rgba32> GetTexture(string textureName)
+    public static Image<Rgba32> GetTexture(string textureName) => GetTexture(textureName, 0);
+
+    public static Image<Rgba32> GetTexture(string textureName, int tileCap)
     {
-        // Use Lazy<T> to ensure exactly one thread loads each texture,
+        int eff = EffectiveCap(tileCap);
+        // Use Lazy<T> to ensure exactly one thread loads each (path,cap),
         // even under parallel access from multiple meshes/LODs.
-        var lazy = Textures.GetOrAdd(textureName,
+        var lazy = Textures.GetOrAdd((textureName, eff),
             key => new Lazy<Image<Rgba32>>(() =>
             {
                 var _t0 = System.Diagnostics.Stopwatch.GetTimestamp();
-                var _img = Image.Load<Rgba32>(key);
-                var (cw, ch) = CapDims(_img.Width, _img.Height);
+                var _img = Image.Load<Rgba32>(key.Path);
+                var (cw, ch) = CapDims(_img.Width, _img.Height, key.Cap);
                 if (cw != _img.Width || ch != _img.Height)
                     _img.Mutate(c => c.Resize(cw, ch));   // downsample once; full-res buffer freed
                 System.Threading.Interlocked.Add(ref _residentBytes, (long)_img.Width * _img.Height * 4);
@@ -66,23 +81,29 @@ public static class TexturesCache
         return lazy.Value;
     }
 
-    /// <summary>Source dims AFTER the MaxResidentEdge cap — used by atlas sizing so
-    /// packing matches the (capped) image <see cref="GetTexture"/> returns.</summary>
-    public static (int Width, int Height) GetCappedDims(string textureName)
+    /// <summary>Source dims AFTER the cap — used by atlas sizing so packing matches
+    /// the (capped) image <see cref="GetTexture"/> returns for the SAME cap.</summary>
+    public static (int Width, int Height) GetCappedDims(string textureName) => GetCappedDims(textureName, 0);
+
+    public static (int Width, int Height) GetCappedDims(string textureName, int tileCap)
     {
         var info = GetTextureInfo(textureName);
-        var (w, h) = CapDims(info.Width, info.Height);
+        var (w, h) = CapDims(info.Width, info.Height, EffectiveCap(tileCap));
         return (w, h);
     }
 
     public static void EvictTexture(string? textureName)
     {
         if (string.IsNullOrEmpty(textureName)) return;
-        if (Textures.TryRemove(textureName, out var lazy) && lazy.IsValueCreated)
+        foreach (var key in Textures.Keys)
         {
-            var img = lazy.Value;
-            System.Threading.Interlocked.Add(ref _residentBytes, -((long)img.Width * img.Height * 4));
-            img.Dispose();
+            if (!string.Equals(key.Path, textureName, System.StringComparison.Ordinal)) continue;
+            if (Textures.TryRemove(key, out var lazy) && lazy.IsValueCreated)
+            {
+                var img = lazy.Value;
+                System.Threading.Interlocked.Add(ref _residentBytes, -((long)img.Width * img.Height * 4));
+                img.Dispose();
+            }
         }
     }
 

@@ -162,19 +162,37 @@ namespace Obj2Tiles
                 : Math.Max(1, Environment.ProcessorCount / 2);
             config.ParallelPhase1 = phase1Mdop > 1;
             Console.WriteLine($" -> ParallelPhase1: {(config.ParallelPhase1 ? "ON" : "OFF")} (tex={modelMetrics.TextureBytes / 1_048_576.0:F1} MiB, mdop={phase1Mdop}, material-aware batching)");
-            Obj2Tiles.Library.TexturesCache.MaxResidentEdge = config.SourceCacheCap;
+            // RAM-aware graceful degradation: the source-texture cache (decode-once +
+            // downsample-to-cap + resident budget + memory-clamped workers + per-chunk
+            // eviction) is gated on SourceCacheCap > 0. When the operator did NOT pass
+            // --source-cache-cap but the decoded source footprint would blow Phase-1
+            // peak RAM, auto-activate it at cap=MaxAtlasSize so a large model degrades
+            // gracefully (bounded per-chunk re-decode) instead of OOMKilling. Small
+            // models keep the byte-identical legacy path (gate does not fire). The gate
+            // keys on the DECODED footprint (ModelMetrics.DecodedTextureBytes), never
+            // the compressed TextureBytes which under-reports >50x. See Phase1AutoCachePolicy.
+            long _availBytes = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
+            int effectiveCap = config.SourceCacheCap;
+            if (Phase1AutoCachePolicy.ShouldAutoEnable(
+                    config.HierarchicalLods, config.SourceCacheCap,
+                    modelMetrics.DecodedTextureBytes, _availBytes))
+            {
+                effectiveCap = config.MaxAtlasSize;
+                Console.WriteLine($" -> AUTO source-cache-cap={effectiveCap}px (decoded tex {modelMetrics.DecodedTextureBytes / 1_048_576} MiB > 50% avail {_availBytes / 1_048_576} MiB) — activating RAM-aware Phase-1 degradation");
+            }
+            Obj2Tiles.Library.TexturesCache.MaxResidentEdge = effectiveCap;
             // G2-SAFE: bound the resident decoded-texture set at 60% of the GC's available-
             // memory view, so peak RAM is scale-safe (degrades to per-chunk re-decode on models
             // with far more distinct textures than fit). Fixtures fit the budget -> never clears
             // -> identical decode-once speed; huge models stay bounded, never OOM.
             var _budgetEnv = System.Environment.GetEnvironmentVariable("HLOD_CACHE_BUDGET_MIB");
             Obj2Tiles.Library.TexturesCache.MaxResidentBytes =
-                config.SourceCacheCap <= 0 ? 0
+                effectiveCap <= 0 ? 0
                 : (!string.IsNullOrEmpty(_budgetEnv) && long.TryParse(_budgetEnv, out var _bmib) && _bmib > 0)
                     ? _bmib * 1024L * 1024L
                     : (long)(GC.GetGCMemoryInfo().TotalAvailableMemoryBytes * 0.60);
-            if (config.SourceCacheCap > 0)
-                Console.WriteLine($" -> SourceCacheCap: decode-once <= {config.SourceCacheCap}px; resident budget {Obj2Tiles.Library.TexturesCache.MaxResidentBytes / 1_048_576} MiB (over-budget -> bounded per-chunk re-decode)");
+            if (effectiveCap > 0)
+                Console.WriteLine($" -> SourceCacheCap: decode-once <= {effectiveCap}px; resident budget {Obj2Tiles.Library.TexturesCache.MaxResidentBytes / 1_048_576} MiB (over-budget -> bounded per-chunk re-decode)");
             Stage("3a. ModelMetrics.Compute");
 
             // 3. Choose shape + build tree (textured).

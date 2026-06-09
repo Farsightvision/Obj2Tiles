@@ -12,10 +12,12 @@ public sealed record ModelMetrics(
     long Triangles,
     long Vertices,
     double BBoxDiag,
-    long TextureBytes)
+    long TextureBytes,
+    long DecodedTextureBytes)
 {
     public override string ToString() =>
-        $"tris={Triangles:N0} verts={Vertices:N0} bbox_diag={BBoxDiag:F2}m tex={TextureBytes / 1_048_576.0:F1}MiB";
+        $"tris={Triangles:N0} verts={Vertices:N0} bbox_diag={BBoxDiag:F2}m " +
+        $"tex={TextureBytes / 1_048_576.0:F1}MiB decoded={DecodedTextureBytes / 1_048_576.0:F1}MiB";
 
     public static ModelMetrics Compute(
         long triangleCount,
@@ -28,6 +30,7 @@ public sealed record ModelMetrics(
         double diag = Math.Sqrt(w * w + h * h + d * d);
 
         long texBytes = 0;
+        long decodedBytes = 0;
         if (objDirectory != null)
         {
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -44,10 +47,21 @@ public sealed record ModelMetrics(
                     if (fi.Exists) texBytes += fi.Length;
                 }
                 catch { /* file may have moved; metrics are best-effort */ }
+                try
+                {
+                    // Decoded RGBA32 footprint (Σ W*H*4) — the quantity that
+                    // actually drives Phase-1 peak RAM. TextureBytes above is the
+                    // COMPRESSED on-disk size (>50x smaller for big PNGs), so it
+                    // must NOT be used for the memory gate. GetTextureInfo reads
+                    // only the image header (Image.Identify, cached) — no decode.
+                    var info = Obj2Tiles.Library.TexturesCache.GetTextureInfo(path);
+                    decodedBytes += (long)info.Width * info.Height * 4L;
+                }
+                catch { /* unreadable header; best-effort */ }
             }
         }
 
-        return new ModelMetrics(triangleCount, vertexCount, diag, texBytes);
+        return new ModelMetrics(triangleCount, vertexCount, diag, texBytes, decodedBytes);
     }
 
     // 2-level centroid dry run → effective branching factor B_eff.

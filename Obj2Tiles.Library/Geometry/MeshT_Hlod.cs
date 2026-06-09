@@ -544,7 +544,7 @@ public class MeshT_Hlod : IMesh
                 });
 
                 var texturePath = string.IsNullOrEmpty(material.Texture) ? material.NormalMap : material.Texture;
-                var info = TexturesCache.GetCappedDims(texturePath);
+                var info = TexturesCache.GetCappedDims(texturePath, _maxAtlasSize);
                 totalTextureArea += rect.Width * info.Width * rect.Height * info.Height;
             }
         }
@@ -790,7 +790,7 @@ public class MeshT_Hlod : IMesh
         if (!string.IsNullOrEmpty(material.Texture))
         {
             stepStartTicks = Stopwatch.GetTimestamp();
-            tex = TexturesCache.GetTexture(material.Texture);
+            tex = TexturesCache.GetTexture(material.Texture, _maxAtlasSize);
             decodeTicks += Stopwatch.GetTimestamp() - stepStartTicks;
         }
 
@@ -852,7 +852,7 @@ public class MeshT_Hlod : IMesh
             if (!string.IsNullOrEmpty(material.NormalMap))
             {
                 stepStartTicks = Stopwatch.GetTimestamp();
-                norm = TexturesCache.GetTexture(material.NormalMap);
+                norm = TexturesCache.GetTexture(material.NormalMap, _maxAtlasSize);
                 decodeTicks += Stopwatch.GetTimestamp() - stepStartTicks;
             }
 
@@ -1225,7 +1225,7 @@ public class MeshT_Hlod : IMesh
                 var info = clusterInfos[i];
                 var material = _materials[info.MaterialIndex];
                 var texturePath = string.IsNullOrEmpty(material.Texture) ? material.NormalMap : material.Texture;
-                var textureInfo = TexturesCache.GetCappedDims(texturePath);
+                var textureInfo = TexturesCache.GetCappedDims(texturePath, _maxAtlasSize);
                 var clusterW = (int)Math.Max(Math.Ceiling(info.UvRect.Width * textureInfo.Width * scale), 1);
                 var clusterH = (int)Math.Max(Math.Ceiling(info.UvRect.Height * textureInfo.Height * scale), 1);
                 var placed = skyline.Insert(clusterW + 2 * g, clusterH + 2 * g);
@@ -1241,7 +1241,7 @@ public class MeshT_Hlod : IMesh
             var info = clusterInfos[i];
             var material = _materials[info.MaterialIndex];
             var texturePath = string.IsNullOrEmpty(material.Texture) ? material.NormalMap : material.Texture;
-            var textureInfo = TexturesCache.GetCappedDims(texturePath);
+            var textureInfo = TexturesCache.GetCappedDims(texturePath, _maxAtlasSize);
             // Scale source cluster size into final-atlas-pixel space.
             var clusterW = (int)Math.Max(Math.Ceiling(info.UvRect.Width * textureInfo.Width * scale), 1);
             var clusterH = (int)Math.Max(Math.Ceiling(info.UvRect.Height * textureInfo.Height * scale), 1);

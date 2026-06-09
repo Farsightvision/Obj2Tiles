@@ -49,7 +49,8 @@ public static class HierarchicalAtlasStage
         string tileName,
         int tileDepth,
         int maxDepth,
-        bool isLeaf)
+        bool isLeaf,
+        bool evictPerMaterial)
     {
         // Build a MeshT_Hlod from the ClipResultT. We pass the FULL material list
         // so the cluster pipeline can resolve material.Texture paths even if
@@ -265,7 +266,11 @@ public static class HierarchicalAtlasStage
             if (string.IsNullOrEmpty(mat.Texture) && string.IsNullOrEmpty(mat.NormalMap))
                 continue;
             mesh.FillAtlases(mat);
-            if (!config.ParallelPhase1)
+            // Evict the just-packed source ONLY when execution is effectively serial
+            // (evictPerMaterial). EvictTexture disposes the decoded image, so doing it
+            // while sibling tiles share the static cache in parallel is a use-after-
+            // dispose race — the caller passes true only for the serial / mdop==1 paths.
+            if (evictPerMaterial)
             {
                 TexturesCache.EvictTexture(mat.Texture);
                 TexturesCache.EvictTexture(mat.NormalMap);
