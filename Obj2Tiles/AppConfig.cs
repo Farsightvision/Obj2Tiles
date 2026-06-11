@@ -59,6 +59,13 @@ public class AppConfig
     /// </summary>
     public int SourceCacheCap { get; set; }
 
+    /// <summary>True when the source cache was AUTO-activated (Phase1AutoCachePolicy)
+    /// rather than via an explicit --source-cache-cap. G14 fits-path demotion is
+    /// gated on this: an explicit cap is the operator's residency choice (decode-once
+    /// kept even if the worker clamp strangles); the auto path may trade decode-once
+    /// for parallelism.</summary>
+    public bool SourceCacheCapAutoEnabled { get; set; }
+
     /// <summary>
     /// Per-tile atlas cap for INTERNAL (non-leaf) HLOD nodes. Leaves get
     /// <see cref="MaxAtlasSize"/>; internal nodes get this smaller cap because

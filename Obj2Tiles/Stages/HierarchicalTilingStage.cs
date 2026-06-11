@@ -192,6 +192,22 @@ public static partial class HierarchicalTilingStage
     }
 
     /// <summary>
+    /// G14 (dev-env strangulation fix): should the fits/pre-decode path be DEMOTED to
+    /// the transient-eviction (over-budget) path? On the fits path the start clamp
+    /// must reserve the whole resident set out of live RAM, so at envelopes where the
+    /// set barely fits its budget (the dev 28300Mi pod: est 11840 MiB vs budget
+    /// 12735 MiB) the reserve eats the worker headroom and clamps mdop 7 → 1..3 —
+    /// at 1 the old runParallel gate even forced fully-SERIAL Phase-1 with
+    /// per-material re-decode churn. HLOD baked slower than legacy flat-grid while
+    /// 5+ CPUs idled. Holding the set is only worth it when workers remain: if the
+    /// fits clamp yields less than half the desired DOP (or under 2), trading
+    /// decode-once for the transient-eviction path (reserve=0 → full DOP; bounded
+    /// resident; the empirically validated never-OOM path) is the better schedule.
+    /// </summary>
+    public static bool ShouldDemoteFitsPath(int desiredMdop, int fitsClampedMdop)
+        => fitsClampedMdop < Math.Max(2, desiredMdop / 2);
+
+    /// <summary>
     /// Resolve a runnable gltfpack binary so --quantize-glbs / KTX2 "just works" without the operator
     /// passing --gltfpack-path. Tries, in order: the explicit --gltfpack-path, then "gltfpack" on PATH,
     /// then common install locations ($HOME/bin, $HOME/.local/bin, /usr/local/bin, /usr/bin). Returns the
@@ -314,6 +330,46 @@ public static partial class HierarchicalTilingStage
             : Environment.ProcessorCount;
         // Real DOP is also bounded by --threads (operator can audit at 1 core).
         phase1Mdop = Math.Max(1, Math.Min(phase1Mdop, parallelism));
+
+        // G14 (dev-env strangulation fix): probe what the fits-path start clamp WOULD
+        // grant (it must reserve the whole resident set out of live RAM). When the
+        // model barely fits its budget — exactly the dev 28300Mi pod: est 11840 MiB vs
+        // budget 12735 MiB — that reserve eats the worker headroom (mdop 7 → 1..3; at
+        // 1 the runParallel gate forced fully-serial Phase-1 WITH per-material
+        // re-decode churn → HLOD slower than legacy). Holding the set is only worth
+        // it when workers remain: otherwise DEMOTE to the transient-eviction path
+        // (reserve=0 → full DOP, bounded resident, the empirically validated
+        // never-OOM machinery). Decision uses only start-time signals — no
+        // post-allocation memory sampling (GC MemoryLoadBytes is a last-GC snapshot,
+        // not live) and no optimistic per-worker estimates for a held-resident loop.
+        // Output is byte-identical either way (same capped decode pixels; per-tile
+        // output is scheduling-independent).
+        // Provenance gate (Codex round-2/3): only the AUTO-activated cache may be
+        // demoted. An explicit --source-cache-cap is the operator's residency choice —
+        // decode-once is kept even when the clamp strangles (we log it so the slowdown
+        // is never silent). The prod prefect flow passes no explicit cap → auto path.
+        if (_predecodeFits && Obj2Tiles.Library.TexturesCache.MaxResidentBytes > 0
+                           && Obj2Tiles.Library.TexturesCache.PersistResident)
+        {
+            int fitsMdop = Phase1AdaptiveMdop(phase1Mdop, _estResident, Obj2Tiles.Library.TexturesCache.MaxResidentEdge);
+            if (ShouldDemoteFitsPath(phase1Mdop, fitsMdop))
+            {
+                if (config.SourceCacheCapAutoEnabled)
+                {
+                    Console.WriteLine(
+                        $" [perf]   Phase-1 fits-path demoted to transient-eviction: holding {_estResident >> 20} MiB resident " +
+                        $"would clamp mdop {phase1Mdop} -> {fitsMdop} (liveAvail={LiveAvailableBytes() >> 20}MiB); " +
+                        "trading decode-once for full parallelism (G14; explicit --source-cache-cap keeps decode-once)");
+                    _predecodeFits = false;
+                }
+                else
+                {
+                    Console.WriteLine(
+                        $" [perf]   Phase-1 fits-path STRANGLED (mdop {phase1Mdop} -> {fitsMdop} holding {_estResident >> 20} MiB) " +
+                        "— explicit --source-cache-cap keeps decode-once (remove the flag to allow G14 demotion)");
+                }
+            }
+        }
 
         // Obj2b graceful degradation (over-budget NATIVE-source case, e.g. vlrg --source-cache-cap 8192):
         // the startup G2-SAFE budget (60% of TOTAL RAM) leaves too little headroom for the Phase-1 worker

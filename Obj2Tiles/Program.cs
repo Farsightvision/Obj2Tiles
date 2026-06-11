@@ -178,6 +178,7 @@ namespace Obj2Tiles
                     modelMetrics.DecodedTextureBytes, _availBytes))
             {
                 effectiveCap = config.MaxAtlasSize;
+                config.SourceCacheCapAutoEnabled = true;
                 Console.WriteLine($" -> AUTO source-cache-cap={effectiveCap}px (decoded tex {modelMetrics.DecodedTextureBytes / 1_048_576} MiB > 50% avail {_availBytes / 1_048_576} MiB) — activating RAM-aware Phase-1 degradation");
             }
             Obj2Tiles.Library.TexturesCache.MaxResidentEdge = effectiveCap;
