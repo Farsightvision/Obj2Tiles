@@ -26,6 +26,9 @@ public static class HierarchicalAtlasStage
     internal static long FillAtlasesTicks;
     internal static long SaveAtlasesTicks;
     internal static long WriteGeometryTicks;
+    // basisu KTX2/ETC1S encode (in-Phase-1, basisu mode). Untracked until now; isolated so the
+    // profile can attribute Phase-1 wall to encode vs decode/fill (the two optimization targets).
+    internal static long Ktx2EncodeTicks;
 
     /// <summary>
     /// Convert a textured tile's <see cref="ClipResultT"/> into a
@@ -296,7 +299,9 @@ public static class HierarchicalAtlasStage
         if (config.Ktx2Hierarchical
             && string.Equals(config.Ktx2Encoder, "basisu", StringComparison.OrdinalIgnoreCase))
         {
+            long tk0 = Stopwatch.GetTimestamp();
             EncodeAtlasesToKtx2Basisu(mesh, config);
+            Interlocked.Add(ref Ktx2EncodeTicks, Stopwatch.GetTimestamp() - tk0);
         }
 
         return (mesh.AtlasEdgeLength, mesh);

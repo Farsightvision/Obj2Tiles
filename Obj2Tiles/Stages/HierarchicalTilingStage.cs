@@ -300,21 +300,18 @@ public static partial class HierarchicalTilingStage
         bool _predecodeFits = Obj2Tiles.Library.TexturesCache.MaxResidentBytes <= 0
                             || _estResident <= Obj2Tiles.Library.TexturesCache.MaxResidentBytes;
 
-        // G7-PARALLEL: Phase-1 default parallelism is adaptive to memory headroom.
-        //   * Resident set fits the budget (decode-once held; the common case incl. all
-        //     fixtures) → use ALL cores. The only per-tile RAM that scales with mdop is the
-        //     bounded transient (one capped atlas + its resample/dilate buffers), so going
-        //     from ProcessorCount/2 → ProcessorCount adds a bounded ~Δ, not unbounded growth.
-        //   * Over budget (huge / texture-diverse model on the per-chunk re-decode path) →
-        //     stay at ProcessorCount/2 so concurrent full-res source re-decodes (≤ mdop ×
-        //     source-size) don't spike RAM. Keeps the OOM guarantee on the worst case.
+        // G7-PARALLEL / DECODE-PARALLEL: Phase-1 default parallelism uses ALL cores; the live-RAM
+        // clamp below scales it down only if the projected peak won't fit. Decode is the dominant
+        // large-model cost and was running at mdop≈2 with most cores idle — purely because the clamp
+        // reserved the whole resident budget (fixed below). Both the fits-budget AND over-budget paths
+        // can use all cores: the over-budget path evicts per-material (concurrency-safe via the
+        // b6248f24 lease) + Clears per chunk, so its resident set is TRANSIENT (~mdop in-flight
+        // sources, already covered by the per-worker estimate), not the full budget.
         // Byte-identical regardless of mdop (per-tile output is scheduling-independent).
         // Operator override: --phase1-batches-per-material.
         int phase1Mdop = config.Phase1BatchesPerMaterial > 0
             ? config.Phase1BatchesPerMaterial
-            : (Obj2Tiles.Library.TexturesCache.PersistResident && _predecodeFits
-                ? Environment.ProcessorCount
-                : Math.Max(1, Environment.ProcessorCount / 2));
+            : Environment.ProcessorCount;
         // Real DOP is also bounded by --threads (operator can audit at 1 core).
         phase1Mdop = Math.Max(1, Math.Min(phase1Mdop, parallelism));
 
@@ -344,7 +341,13 @@ public static partial class HierarchicalTilingStage
             }
         }
         {
-            long _reserve = _predecodeFits ? _estResident : Obj2Tiles.Library.TexturesCache.MaxResidentBytes;
+            // Reserve = RAM HELD and unavailable to workers. The fits-budget path holds the decode-once
+            // set (_estResident). The over-budget path does NOT hold the budget: per-material eviction +
+            // per-chunk Clear keep its resident transient (~mdop sources, already in the per-worker
+            // estimate), so reserving the full MaxResidentBytes here over-clamped mdop to ~2 and left
+            // cores idle. Reserve 0 there lets the clamp scale mdop by real headroom (≈cores at 8 GiB,
+            // fewer at 4 GiB); per-worker (capEdge²×32) still bounds the concurrent decode transient.
+            long _reserve = _predecodeFits ? _estResident : 0L;
             int _reqMdop = phase1Mdop;
             phase1Mdop = Phase1AdaptiveMdop(phase1Mdop, _reserve, Obj2Tiles.Library.TexturesCache.MaxResidentEdge);
             if (phase1Mdop != _reqMdop)
@@ -358,6 +361,7 @@ public static partial class HierarchicalTilingStage
         HierarchicalAtlasStage.FillAtlasesTicks = 0;
         HierarchicalAtlasStage.SaveAtlasesTicks = 0;
         HierarchicalAtlasStage.WriteGeometryTicks = 0;
+        HierarchicalAtlasStage.Ktx2EncodeTicks = 0;
         Obj2Tiles.Library.Common_Hlod.DilateTicks = 0;
         var preparedBag = new System.Collections.Concurrent.ConcurrentBag<TilePrepared>();
         bool runParallel = config.ParallelPhase1 && phase1Mdop > 1;
@@ -432,32 +436,45 @@ public static partial class HierarchicalTilingStage
             }
             else
             {
-                int chunkSize = Math.Max(phase1Mdop * 2, 4);
-                for (int start = 0; start < sortedTiles.Count; start += chunkSize)
+                // Over-budget path: ONE barrier-free pass over ALL tiles. The old code chunked into
+                // (phase1Mdop*2)-tile groups with a Parallel.ForEach barrier + Clear() between each — on
+                // the large model that was 21 barriers, each stalling on its slowest (shallow/root) tile,
+                // throttling the mdop-N decode parallelism to ~3x effective. Per-material eviction
+                // (concurrency-safe via the b6248f24 lease) bounds resident to ~mdop in-flight sources —
+                // NOT the full budget — so the barriers were never needed for RAM. (A byte-budgeted LRU
+                // residency was prototyped to cut the re-decode itself, but it thrashes on shallow tiles
+                // whose per-tile material set exceeds the budget — so the win here is parallelism.)
+                // Re-clamp mdop once against post-load live RAM (the resident set is steady under
+                // per-material eviction, so a single check is the safe mdop — verified: the old per-chunk
+                // re-clamp never degraded below the initial value on the large-model bake).
+                int _passMdop = Phase1AdaptiveMdop(phase1Mdop, 0L, Obj2Tiles.Library.TexturesCache.MaxResidentEdge);
+                if (_passMdop != phase1Mdop)
+                    Console.WriteLine($" [perf]   Phase-1 over-budget pass mdop {phase1Mdop} -> {_passMdop} (live-RAM, reserve=0, liveAvail={LiveAvailableBytes() >> 20}MiB)");
+                phase1Mdop = _passMdop;   // reflect the effective mdop in the downstream Phase-1 telemetry (Codex item 5)
+                // Heavy-first so the slowest tiles start first and the rest backfill (kills the tail
+                // stall the chunk barriers used to cause). Byte-identical (per-tile output is
+                // scheduling-independent; collections are order-independent ConcurrentBags).
+                var loopTiles = new List<HierarchicalNode>(sortedTiles);
+                loopTiles.Sort((a, b) =>
                 {
-                    int end = Math.Min(start + chunkSize, sortedTiles.Count);
-                    var chunk = sortedTiles.GetRange(start, end - start);
-                    // Obj2b: re-check LIVE memory before each chunk (the resident cache grew since the
-                    // last). reserve=0 — the live MemAvailable view already reflects the loaded cache.
-                    // Degrades toward mdop=1 as RAM tightens; output-neutral (scheduling only).
-                    int _chunkMdop = Phase1AdaptiveMdop(phase1Mdop, 0L, Obj2Tiles.Library.TexturesCache.MaxResidentEdge);
-                    // When the live-RAM clamp has made this chunk serial (mdop==1) there are no
-                    // concurrent tiles sharing the static cache, so per-material eviction is
-                    // dispose-safe AND needed to bound the resident set under memory pressure.
-                    bool evictPerMaterial = _chunkMdop == 1;
-                    Parallel.ForEach(
-                        chunk,
-                        new ParallelOptions { MaxDegreeOfParallelism = _chunkMdop },
-                        n =>
-                        {
-                            var p = PrepareTileForGlb(n, outputDir, isQuadtree, materials, config, maxDepth, evictPerMaterial);
-                            atlasEdges.Add((n.Depth, p.AtlasEdge));
-                            preparedBag.Add(p);
-                        });
-                    // Free the materials touched by this chunk before the next (RAM bound).
-                    Obj2Tiles.Library.TexturesCache.Clear();
-                    chunkCount++;
-                }
+                    int fa = a.TileContentT?.Faces.Length ?? 0;
+                    int fb = b.TileContentT?.Faces.Length ?? 0;
+                    if (fa != fb) return fb.CompareTo(fa); // heaviest first
+                    return string.CompareOrdinal(a.Coord.ToContentUri(isQuadtree), b.Coord.ToContentUri(isQuadtree));
+                });
+                Parallel.ForEach(
+                    loopTiles,
+                    new ParallelOptions { MaxDegreeOfParallelism = _passMdop },
+                    n =>
+                    {
+                        var p = PrepareTileForGlb(n, outputDir, isQuadtree, materials, config, maxDepth, evictPerMaterial: true);
+                        atlasEdges.Add((n.Depth, p.AtlasEdge));
+                        preparedBag.Add(p);
+                    });
+                chunkCount = 1;
+                // One final Clear: per-material eviction already freed sources as it went; this releases
+                // any tail before Phase-2/3.
+                Obj2Tiles.Library.TexturesCache.Clear();
             }
         }
         else
@@ -481,8 +498,8 @@ public static partial class HierarchicalTilingStage
         // Per-step CPU-second breakdown (summed across parallel tasks).
         double TicksToSec(long t) => (double)t / System.Diagnostics.Stopwatch.Frequency;
         long TicksToMs(long t) => (long)(TicksToSec(t) * 1000);
-        Console.WriteLine($" [perf]     ctor={TicksToSec(HierarchicalAtlasStage.CtorTicks):F2}s prepare={TicksToSec(HierarchicalAtlasStage.PrepareRepackTicks):F2}s fillAtlases={TicksToSec(HierarchicalAtlasStage.FillAtlasesTicks):F2}s saveAtlases={TicksToSec(HierarchicalAtlasStage.SaveAtlasesTicks):F2}s writeGeom={TicksToSec(HierarchicalAtlasStage.WriteGeometryTicks):F2}s  [CPU-sec summed across {(config.ParallelPhase1 ? "parallel" : "serial")} tiles]");
-        Console.WriteLine($"[perf:hlod:Phase1_Breakdown] ctor={TicksToMs(HierarchicalAtlasStage.CtorTicks)}ms prepare={TicksToMs(HierarchicalAtlasStage.PrepareRepackTicks)}ms fillAtlases={TicksToMs(HierarchicalAtlasStage.FillAtlasesTicks)}ms saveAtlases={TicksToMs(HierarchicalAtlasStage.SaveAtlasesTicks)}ms writeGeom={TicksToMs(HierarchicalAtlasStage.WriteGeometryTicks)}ms cpu_sum_ms");
+        Console.WriteLine($" [perf]     ctor={TicksToSec(HierarchicalAtlasStage.CtorTicks):F2}s prepare={TicksToSec(HierarchicalAtlasStage.PrepareRepackTicks):F2}s fillAtlases={TicksToSec(HierarchicalAtlasStage.FillAtlasesTicks):F2}s saveAtlases={TicksToSec(HierarchicalAtlasStage.SaveAtlasesTicks):F2}s ktx2Encode={TicksToSec(HierarchicalAtlasStage.Ktx2EncodeTicks):F2}s writeGeom={TicksToSec(HierarchicalAtlasStage.WriteGeometryTicks):F2}s  [CPU-sec summed across {(config.ParallelPhase1 ? "parallel" : "serial")} tiles]");
+        Console.WriteLine($"[perf:hlod:Phase1_Breakdown] ctor={TicksToMs(HierarchicalAtlasStage.CtorTicks)}ms prepare={TicksToMs(HierarchicalAtlasStage.PrepareRepackTicks)}ms fillAtlases={TicksToMs(HierarchicalAtlasStage.FillAtlasesTicks)}ms saveAtlases={TicksToMs(HierarchicalAtlasStage.SaveAtlasesTicks)}ms ktx2Encode={TicksToMs(HierarchicalAtlasStage.Ktx2EncodeTicks)}ms writeGeom={TicksToMs(HierarchicalAtlasStage.WriteGeometryTicks)}ms cpu_sum_ms");
 
         // Phase 2: parallel OBJ → glTF → GLB conversion.
         var swPhase2 = System.Diagnostics.Stopwatch.StartNew();

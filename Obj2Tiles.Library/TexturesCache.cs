@@ -38,6 +38,21 @@ public static class TexturesCache
     private static long _residentBytes;
     public static long ResidentBytes => System.Threading.Interlocked.Read(ref _residentBytes);
 
+    // ===== Parallel-safe per-material eviction (HLOD chunked Phase-1) =====
+    // EvictTexture used to Dispose the source Image inline, which is a use-after-dispose
+    // hazard when sibling tiles sample the SAME shared image concurrently — so eviction
+    // was forced serial. Instead we track active readers per PATH: EvictTexture defers the
+    // dispose while any reader holds a lease, and the last ReleaseRead performs it. Disposes
+    // are done OUTSIDE this lock (Image.Dispose can be non-trivial). Output is byte-identical:
+    // a reader never observes a disposed/partial image, and re-decode after eviction is
+    // deterministic (same file + same cap → same pixels). Single lock ⇒ no lock-ordering risk;
+    // GetTexture never takes it (the expensive decode/pixel-copy stays off the lock).
+    private static readonly object _evictLock = new();
+    private static readonly System.Collections.Generic.Dictionary<string, int> _activeReaders =
+        new(System.StringComparer.Ordinal);
+    private static readonly System.Collections.Generic.HashSet<string> _pendingEvict =
+        new(System.StringComparer.Ordinal);
+
     /// <summary>
     /// Effective decode cap for a per-tile request. When the resident cache is OFF
     /// (MaxResidentEdge &lt;= 0, the small-model legacy path) the per-tile cap is IGNORED
@@ -60,6 +75,13 @@ public static class TexturesCache
 
     public static Image<Rgba32> GetTexture(string textureName) => GetTexture(textureName, 0);
 
+    // LEASE INVARIANT (Codex review b6248f24, hunt 2): when eviction can run concurrently
+    // (the HLOD chunked Phase-1), the caller MUST hold a lease (AcquireRead) on textureName
+    // around GetTexture AND all sampling of the returned image — otherwise EvictTexture could
+    // dispose it under the reader. MeshT_Hlod.FillAtlases is the only such caller and brackets
+    // both GetTexture calls in AcquireRead/finally-ReleaseRead. The other callers (legacy
+    // MeshT.FillAtlases, the warm-predecode loop, GetCappedDims) run only OUTSIDE the
+    // eviction-active path, so an unleased get there is safe.
     public static Image<Rgba32> GetTexture(string textureName, int tileCap)
     {
         int eff = EffectiveCap(tileCap);
@@ -68,15 +90,30 @@ public static class TexturesCache
         var lazy = Textures.GetOrAdd((textureName, eff),
             key => new Lazy<Image<Rgba32>>(() =>
             {
-                var _t0 = System.Diagnostics.Stopwatch.GetTimestamp();
-                var _img = Image.Load<Rgba32>(key.Path);
-                var (cw, ch) = CapDims(_img.Width, _img.Height, key.Cap);
-                if (cw != _img.Width || ch != _img.Height)
-                    _img.Mutate(c => c.Resize(cw, ch));   // downsample once; full-res buffer freed
-                System.Threading.Interlocked.Add(ref _residentBytes, (long)_img.Width * _img.Height * 4);
-                System.Threading.Interlocked.Increment(ref DecodeCount);
-                System.Threading.Interlocked.Add(ref DecodeTicks, System.Diagnostics.Stopwatch.GetTimestamp() - _t0);
-                return _img;
+                try
+                {
+                    var _t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                    var _img = Image.Load<Rgba32>(key.Path);
+                    var (cw, ch) = CapDims(_img.Width, _img.Height, key.Cap);
+                    if (cw != _img.Width || ch != _img.Height)
+                        _img.Mutate(c => c.Resize(cw, ch));   // downsample once; full-res buffer freed
+                    System.Threading.Interlocked.Add(ref _residentBytes, (long)_img.Width * _img.Height * 4);
+                    System.Threading.Interlocked.Increment(ref DecodeCount);
+                    System.Threading.Interlocked.Add(ref DecodeTicks, System.Diagnostics.Stopwatch.GetTimestamp() - _t0);
+                    return _img;
+                }
+                catch
+                {
+                    // A FAULTED Lazy keeps IsValueCreated==false forever, and the eviction paths skip
+                    // !IsValueCreated entries (to never detach an in-progress decode) — so without this
+                    // self-removal a transient decode fault would leave a permanently unevictable,
+                    // always-rethrowing entry (Codex review, hunt 4). A faulted entry holds no image,
+                    // so removal is always safe; the next GetTexture retries fresh. Eviction cannot
+                    // remove THIS entry mid-flight (it skips in-progress), so the TryRemove targets
+                    // exactly this Lazy.
+                    Textures.TryRemove(key, out _);
+                    throw;
+                }
             }));
         return lazy.Value;
     }
@@ -92,19 +129,87 @@ public static class TexturesCache
         return (w, h);
     }
 
+    /// <summary>Register an active reader (lease) for <paramref name="textureName"/> before
+    /// sampling the image it returns from <see cref="GetTexture(string,int)"/>. While any lease
+    /// is held, a concurrent <see cref="EvictTexture"/> defers the dispose. MUST be balanced by
+    /// <see cref="ReleaseRead"/> in a finally. No-op on null/empty (no source path).</summary>
+    public static void AcquireRead(string? textureName)
+    {
+        if (string.IsNullOrEmpty(textureName)) return;
+        lock (_evictLock)
+        {
+            _activeReaders.TryGetValue(textureName, out var c);
+            _activeReaders[textureName] = c + 1;
+        }
+    }
+
+    /// <summary>Release a lease taken by <see cref="AcquireRead"/>. If this is the last reader
+    /// AND an eviction was deferred while it was held, the deferred dispose fires now (outside
+    /// the lock).</summary>
+    public static void ReleaseRead(string? textureName)
+    {
+        if (string.IsNullOrEmpty(textureName)) return;
+        System.Collections.Generic.List<Image<Rgba32>>? toDispose = null;
+        lock (_evictLock)
+        {
+            if (!_activeReaders.TryGetValue(textureName, out var c)) return;   // defensive: unbalanced release
+            if (c > 1) { _activeReaders[textureName] = c - 1; return; }
+            _activeReaders.Remove(textureName);
+            if (_pendingEvict.Remove(textureName))
+                toDispose = CollectForDispose(textureName);                    // deferred eviction fires now
+        }
+        DisposeAll(toDispose);
+    }
+
     public static void EvictTexture(string? textureName)
     {
         if (string.IsNullOrEmpty(textureName)) return;
-        foreach (var key in Textures.Keys)
+        System.Collections.Generic.List<Image<Rgba32>>? toDispose = null;
+        lock (_evictLock)
         {
-            if (!string.Equals(key.Path, textureName, System.StringComparison.Ordinal)) continue;
-            if (Textures.TryRemove(key, out var lazy) && lazy.IsValueCreated)
+            if (_activeReaders.TryGetValue(textureName, out var c) && c > 0)
+            {
+                _pendingEvict.Add(textureName);   // a reader is sampling it — defer to the last ReleaseRead
+                return;
+            }
+            _pendingEvict.Remove(textureName);    // no active reader → dispose now (drop any stale pending)
+            toDispose = CollectForDispose(textureName);
+        }
+        DisposeAll(toDispose);
+    }
+
+    /// <summary>Under <see cref="_evictLock"/>: detach every (path, cap) entry for this path from
+    /// the cache, decrement the resident-byte counter, and return the images to dispose. The actual
+    /// <c>Dispose()</c> is done by the caller AFTER releasing the lock. Safe because the entries are
+    /// removed from the only registry here, so no concurrent <see cref="GetTexture(string,int)"/> can
+    /// hand the same instance out again (a later GetTexture re-decodes a fresh entry).</summary>
+    private static System.Collections.Generic.List<Image<Rgba32>>? CollectForDispose(string textureName)
+    {
+        System.Collections.Generic.List<Image<Rgba32>>? imgs = null;
+        foreach (var kvp in Textures)
+        {
+            if (!string.Equals(kvp.Key.Path, textureName, System.StringComparison.Ordinal)) continue;
+            // Never detach an in-progress decode (Codex review, hunt 5): removing a Lazy whose
+            // factory is still running would orphan the image it returns (undisposed) and leave
+            // _residentBytes permanently overstated. Unreachable on the leased HLOD path
+            // (in-progress ⇒ leased ⇒ eviction deferred), but harden the API: skip it; a later
+            // eviction/Clear disposes it once published. (Faulted entries self-remove in the
+            // factory's catch, so they cannot linger under this skip.)
+            if (!kvp.Value.IsValueCreated) continue;
+            if (Textures.TryRemove(kvp.Key, out var lazy) && lazy.IsValueCreated)
             {
                 var img = lazy.Value;
                 System.Threading.Interlocked.Add(ref _residentBytes, -((long)img.Width * img.Height * 4));
-                img.Dispose();
+                (imgs ??= new System.Collections.Generic.List<Image<Rgba32>>()).Add(img);
             }
         }
+        return imgs;
+    }
+
+    private static void DisposeAll(System.Collections.Generic.List<Image<Rgba32>>? imgs)
+    {
+        if (imgs == null) return;
+        foreach (var img in imgs) img.Dispose();
     }
 
     public static void Clear()
@@ -116,14 +221,31 @@ public static class TexturesCache
         // (MaxResidentBytes<=0 keeps the legacy unbounded hold — only for tiny inputs.)
         if (PersistResident && (MaxResidentBytes <= 0 || System.Threading.Interlocked.Read(ref _residentBytes) <= MaxResidentBytes))
             return;
-        foreach (var kvp in Textures)
+        // Clear() is contracted to run only at a BARRIER (no reader leases in-flight): all three
+        // callers — between-chunk (after the chunk's Parallel.ForEach), Program Phase-3 (after
+        // Phase-1), and legacy SplitStage (after its per-material ForEach) — are post-barrier.
+        // Defensive hardening (Codex review b6248f24, hunt 6): never dispose an image whose path
+        // still has an active lease, so a mistaken non-barrier call degrades to "leave it
+        // resident" instead of a use-after-dispose. At a true barrier _activeReaders is empty,
+        // so this disposes everything exactly as before. Disposes run OUTSIDE the lock.
+        System.Collections.Generic.List<Image<Rgba32>> toDispose = new();
+        lock (_evictLock)
         {
-            if (kvp.Value.IsValueCreated)
-                kvp.Value.Value.Dispose();
+            _pendingEvict.Clear();
+            foreach (var kvp in Textures)
+            {
+                if (_activeReaders.ContainsKey(kvp.Key.Path)) continue;   // leased — leave resident
+                if (!kvp.Value.IsValueCreated) continue;   // in-progress decode — never detach (hunt 5)
+                if (Textures.TryRemove(kvp.Key, out var lazy) && lazy.IsValueCreated)
+                {
+                    var img = lazy.Value;
+                    System.Threading.Interlocked.Add(ref _residentBytes, -((long)img.Width * img.Height * 4));
+                    toDispose.Add(img);
+                }
+            }
+            TextureInfos.Clear();   // metadata only (no Image to dispose)
         }
-        Textures.Clear();
-        TextureInfos.Clear();
-        System.Threading.Interlocked.Exchange(ref _residentBytes, 0);
+        foreach (var img in toDispose) img.Dispose();
     }
 
     public static ImageInfo GetTextureInfo(string textureName)
