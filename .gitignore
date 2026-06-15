@@ -3,8 +3,21 @@ obj/
 /packages/
 riderModule.iml
 /_ReSharper.Caches/
-.vs/publish/
-.idea/Obj2Tiles.iml
-.idea/modules.xml
-.idea/vcs.xml
-.idea/workspace.xml
+
+# macOS metadata
+.DS_Store
+
+# Build output
+publish/
+
+# IDE / VCS-local files
+.idea/
+.vs/
+.vscode/
+
+# Python venvs
+.venv/
+
+# Server-built native libs (rebuilt on each host via cmake)
+Obj2Tiles.Native/native/_build_*/
+Obj2Tiles.Native/native/runtimes/linux-x64/

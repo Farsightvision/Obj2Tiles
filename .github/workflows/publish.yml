@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
+      with:
+        submodules: recursive   # meshoptimizer is a git submodule; the native-lib build step needs its source
     - name: Setup .NET
       uses: actions/setup-dotnet@v2
       with:
@@ -22,7 +24,30 @@ jobs:
       run: echo ${{ github.sha }} > Release.txt
     - name: Test
       run: cat Release.txt
-        
+
+    # Build the native meshoptimizer shared lib for the Linux targets BEFORE publish.
+    # The csproj copies native/runtimes/$(RuntimeIdentifier)/native/libmeshoptimizer.so
+    # into the publish output; without this the linux-arm64 (prod) zip ships no native
+    # lib and crashes on the HLOD meshoptimizer P/Invoke. linux-x64 builds natively;
+    # linux-arm64 cross-compiles with the aarch64 toolchain. (win/osx native libs are
+    # out of scope here — prod is linux-arm64.)
+    - name: Build native meshoptimizer (linux x64 + arm64)
+      run: |
+        set -eux
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends cmake g++ g++-aarch64-linux-gnu file
+        SRC=Obj2Tiles.Native/native/meshoptimizer
+        cmake -S "$SRC" -B build-mo-x64 -DCMAKE_BUILD_TYPE=Release -DMESHOPT_BUILD_SHARED_LIBS=ON
+        cmake --build build-mo-x64 --config Release -j"$(nproc)"
+        install -D build-mo-x64/libmeshoptimizer.so Obj2Tiles.Native/native/runtimes/linux-x64/native/libmeshoptimizer.so
+        cmake -S "$SRC" -B build-mo-arm64 -DCMAKE_BUILD_TYPE=Release -DMESHOPT_BUILD_SHARED_LIBS=ON \
+          -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+          -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++
+        cmake --build build-mo-arm64 --config Release -j"$(nproc)"
+        install -D build-mo-arm64/libmeshoptimizer.so Obj2Tiles.Native/native/runtimes/linux-arm64/native/libmeshoptimizer.so
+        file Obj2Tiles.Native/native/runtimes/linux-x64/native/libmeshoptimizer.so
+        file Obj2Tiles.Native/native/runtimes/linux-arm64/native/libmeshoptimizer.so
+
     - name: Publish win-x64
       run: dotnet publish -p:PublishProfile=win-x64.pubxml Obj2Tiles
     - name: Publish win-arm64
@@ -32,7 +57,17 @@ jobs:
     - name: Publish linux-arm64
       run: dotnet publish -p:PublishProfile=linux-arm64.pubxml Obj2Tiles
     - name: Publish osx-x64
-      run: dotnet publish -p:PublishProfile=osx-x64.pubxml Obj2Tiles  
+      run: dotnet publish -p:PublishProfile=osx-x64.pubxml Obj2Tiles
+
+    # PublishSingleFile does NOT place Content native libs beside the binary (they only
+    # land under runtimes/, which the DllImport resolver ignores). Copy the matching-arch
+    # libmeshoptimizer.so next to each linux binary so the HLOD meshoptimizer P/Invoke
+    # resolves at runtime — without this the linux-arm64 (prod) binary crashes.
+    - name: Stage native meshoptimizer beside linux binaries
+      run: |
+        set -eux
+        cp Obj2Tiles.Native/native/runtimes/linux-x64/native/libmeshoptimizer.so   Obj2Tiles/bin/Release/net9.0/publish/linux-x64/
+        cp Obj2Tiles.Native/native/runtimes/linux-arm64/native/libmeshoptimizer.so Obj2Tiles/bin/Release/net9.0/publish/linux-arm64/
 
     - name: Zip win-x64
       run: cd Obj2Tiles/bin/Release/net9.0/publish/win-x64/ && zip -r ../../../../../../Obj2Tiles-Win64.zip *
