@@ -269,12 +269,29 @@ public class Mesh3Tests
     [Test]
     public void Orientation_TestBrighton()
     {
-        
+
         using var fs = new TestFS(BrightonTexturingTestUrl, nameof(Mesh3Tests));
 
         var mesh = (MeshT)MeshUtils.LoadMesh(Path.Combine(fs.TestFolder, "odm_textured_model_geo.obj"), false, true, 0.1f, 1f);
 
         var orientation = mesh.GetAverageOrientation();
 
+    }
+
+    [Test]
+    public void WriteObj_Cube_ZeroMaxAtlasSize_FallsBackToDefault()
+    {
+        var testPath = GetTestOutputPath(nameof(WriteObj_Cube_ZeroMaxAtlasSize_FallsBackToDefault));
+
+        var mesh = (MeshT)MeshUtils.LoadMesh(
+            Path.Combine(TestDataPath, "cube/cube.obj"),
+            false, true, 0.1f, 1f, jpegQuality: 90, maxAtlasSize: 0);
+
+        mesh.WriteObj(Path.Combine(testPath, "mesh.obj"));
+
+        mesh.AtlasEdgeLength.Should().BeGreaterThan(0);
+
+        var atlas = Directory.GetFiles(testPath, "*-texture-diffuse-atlas.jpg");
+        atlas.Should().NotBeEmpty("the flat atlas save path must emit a texture atlas");
     }
 }

@@ -11,15 +11,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
+      with:
+        submodules: recursive
     - name: Setup .NET
       uses: actions/setup-dotnet@v2
       with:
         dotnet-version: 9.0.x
+    - name: Build native meshoptimizer (linux-x64)
+      run: |
+        set -eux
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends cmake g++
+        SRC=Obj2Tiles.Native/native/meshoptimizer
+        cmake -S "$SRC" -B build-mo-x64 -DCMAKE_BUILD_TYPE=Release -DMESHOPT_BUILD_SHARED_LIBS=ON
+        cmake --build build-mo-x64 --config Release -j"$(nproc)"
+        install -D build-mo-x64/libmeshoptimizer.so Obj2Tiles.Native/native/runtimes/linux-x64/native/libmeshoptimizer.so
     - name: Restore dependencies
       run: dotnet restore
     - name: Build
-      run: |
-        pwd
-        dotnet build --no-restore
+      run: dotnet build --no-restore
     - name: Test
       run: dotnet test --no-build --verbosity normal

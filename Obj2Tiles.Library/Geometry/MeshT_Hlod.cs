@@ -5,16 +5,36 @@ using Obj2Tiles.Library.Materials;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
+using SixLabors.ImageSharp.Processing.Processors.Transforms;
 using Path = System.IO.Path;
 using Rectangle = Obj2Tiles.Library.Algos.Model.Rectangle;
 
 namespace Obj2Tiles.Library.Geometry;
 
-public class MeshT : IMesh
+public class MeshT_Hlod : IMesh
 {
     public const string DefaultName = "Mesh";
     private const int DefaultMaxAtlasSize = 4096;
     private const int DefaultJpegQuality = 90;
+
+    /// <summary>
+    /// Inter-cluster gutter, in final-atlas pixels, reserved around each packed
+    /// cluster and later filled by <see cref="Common_Hlod.DilateAtlasBleed"/> so
+    /// bilinear sampling at a cluster edge picks up that cluster's edge pixels
+    /// rather than the neighbour's. Must be sized in final atlas pixel space
+    /// (post atlas-cap scale), or a large natural→small-cap downscale shrinks it
+    /// to near zero.
+    /// </summary>
+    private const int AtlasGutterPixels = 16;
+
+    // Shrink the gutter as cluster count grows: at high cluster counts each atlas
+    // patch is tiny and a 16-px gutter would dominate the area budget.
+    internal static int EffectiveGutterPixels(int clusterCount)
+    {
+        if (clusterCount > 1000) return 4;
+        if (clusterCount > 200)  return 8;
+        return AtlasGutterPixels;
+    }
 
     private sealed class ClusterInfo
     {
@@ -40,6 +60,8 @@ public class MeshT : IMesh
     private List<ClusterInfo> _clusterInfos;
     private Image<Rgba32> _atlasTexture;
     private Image<Rgba32> _atlasNormalMap;
+    private int _naturalAtlasEdgeLength;
+    private bool _useSingleResamplePath;
 
     public IReadOnlyList<Vertex3> Vertices => _vertices;
     public IReadOnlyList<Vertex2> TextureVertices => _textureVertices;
@@ -48,7 +70,7 @@ public class MeshT : IMesh
     public int AtlasEdgeLength { get; private set; }
     public string FilePath { get; set; }
 
-    public MeshT(
+    public MeshT_Hlod(
         IEnumerable<Vertex3> vertices,
         IEnumerable<Vertex2> textureVertices,
         IEnumerable<FaceT> faces,
@@ -63,7 +85,8 @@ public class MeshT : IMesh
         _packingThreshold = packingThreshold;
         _textureQuality = textureQuality;
         _jpegQuality = jpegQuality;
-        // A non-positive cap would collapse the atlas to 0x0 and crash Resize; treat <= 0 as the default.
+        // 0 means "no explicit cap" on LodConfig; here it would collapse the
+        // atlas to nothing, so fall back to the default.
         _maxAtlasSize = maxAtlasSize > 0 ? maxAtlasSize : DefaultMaxAtlasSize;
         _vertices = [..vertices];
         _textureVertices = [..textureVertices];
@@ -75,6 +98,9 @@ public class MeshT : IMesh
     }
 
     public string Name { get; set; } = DefaultName;
+
+    /// <summary>Unsharp-mask strength (0 = off, 1 = strong) applied before JPEG encode.</summary>
+    public double AtlasUnsharpAmount { get; set; } = 0.0;
 
     public int Split(IVertexUtils utils, double q, out IMesh left,
         out IMesh right)
@@ -224,12 +250,12 @@ public class MeshT : IMesh
         var orderedLeftTextureVertices = leftTextureVertices.OrderBy(x => x.Value).Select(x => x.Key);
         var orderedRightTextureVertices = rightTextureVertices.OrderBy(x => x.Value).Select(x => x.Key);
 
-        left = new MeshT(orderedLeftVertices, orderedLeftTextureVertices, leftFaces, _materials, _saveVertexColor,
+        left = new MeshT_Hlod(orderedLeftVertices, orderedLeftTextureVertices, leftFaces, _materials, _saveVertexColor,
             _saveUv, _packingThreshold, _textureQuality, _jpegQuality, _maxAtlasSize)
         {
             Name = $"{Name}-{utils.Axis}L"
         };
-        right = new MeshT(orderedRightVertices, orderedRightTextureVertices, rightFaces, _materials,
+        right = new MeshT_Hlod(orderedRightVertices, orderedRightTextureVertices, rightFaces, _materials,
             _saveVertexColor, _saveUv, _packingThreshold, _textureQuality, _jpegQuality, _maxAtlasSize)
         {
             Name = $"{Name}-{utils.Axis}R"
@@ -401,8 +427,7 @@ public class MeshT : IMesh
     }
 
     /// <summary>
-    /// Phase 1: Prepares texture repacking by creating cluster information and calculating optimal atlas size.
-    /// This method also performs bin packing and fills the PackedRect for each cluster.
+    /// Builds cluster info, sizes the atlas, and bin-packs each cluster's PackedRect.
     /// </summary>
     public void PrepareRepackTextures(bool removeUnused = true)
     {
@@ -411,7 +436,6 @@ public class MeshT : IMesh
         if (removeUnused)
             RemoveUnusedVertices();
 
-        // Initialize vertex colors if needed
         _vertexColors.Clear();
 
         if (_saveVertexColor)
@@ -431,7 +455,6 @@ public class MeshT : IMesh
         var clustersByMaterial = new Dictionary<int, IReadOnlyList<List<int>>>();
         var sw = new Stopwatch();
 
-        // Build clusters for each material
         for (var m = 0; m < facesByMaterial.Count; m++)
         {
             var material = _materials[m];
@@ -470,7 +493,6 @@ public class MeshT : IMesh
             clustersByMaterial.Add(m, clusters);
         }
 
-        // Build cluster infos and calculate atlas size
         Debug.WriteLine("Building cluster infos");
         _clusterInfos = new List<ClusterInfo>();
         double totalTextureArea = 0;
@@ -495,7 +517,7 @@ public class MeshT : IMesh
                 });
 
                 var texturePath = string.IsNullOrEmpty(material.Texture) ? material.NormalMap : material.Texture;
-                var info = TexturesCache.GetTextureInfo(texturePath);
+                var info = TexturesCache.GetCappedDims(texturePath, _maxAtlasSize);
                 totalTextureArea += rect.Width * info.Width * rect.Height * info.Height;
             }
         }
@@ -506,10 +528,8 @@ public class MeshT : IMesh
             return;
         }
 
-        // Sort clusters by size for better packing
         _clusterInfos.Sort((a, b) => b.Cluster.Count.CompareTo(a.Cluster.Count));
 
-        // Calculate optimal atlas size
         var edgeLength = (int)Math.Sqrt(totalTextureArea);
         var powerOfTwo = Common.NextPowerOfTwo(edgeLength);
         var fraction = totalTextureArea / powerOfTwo / powerOfTwo;
@@ -520,30 +540,142 @@ public class MeshT : IMesh
             edgeLength = (int)(edgeLength * 1.01);
 
         edgeLength = Math.Max(edgeLength, 32);
+        _naturalAtlasEdgeLength = edgeLength;
+        _useSingleResamplePath = false;
 
-        // Perform bin packing to find optimal layout and fill PackedRect
-        var iterations = 1;
-
-        while (!TryPackClusterInfos(_clusterInfos, edgeLength))
+        // Single-resample path: when the natural edge is at most 4× the cap (and
+        // under the 12288² ceiling that bounds RGBA32 memory), pack at natural
+        // size and let one Lanczos3 downsample produce the atlas — sharper than
+        // cumulative per-cluster resamples. Larger tiles fall through to the
+        // per-cluster cap-bound path below.
+        if (_maxAtlasSize > 0 &&
+            edgeLength > _maxAtlasSize &&
+            edgeLength <= Math.Min(_maxAtlasSize * 4, 12288) &&
+            TryPackClusterInfosAtNaturalSize(edgeLength, Math.Min(_maxAtlasSize * 4, 12288), out var naturalPackedEdge))
         {
-            var newEdgeLength = Math.Max(edgeLength + 10, (int)(edgeLength * 1.02));
-            edgeLength = newEdgeLength;
+            AtlasEdgeLength = naturalPackedEdge;
+            _naturalAtlasEdgeLength = naturalPackedEdge;
+            _useSingleResamplePath = true;
+            return;
+        }
+
+        // Pre-apply the atlas cap so the bin-pack and gutter live in final atlas
+        // pixel space; otherwise the gutter shrinks with the post-pack scale and
+        // loses its bilinear-safe band.
+        double scale = 1.0;
+        if (_maxAtlasSize > 0 && edgeLength > _maxAtlasSize)
+        {
+            scale = (double)_maxAtlasSize / edgeLength;
+            edgeLength = _maxAtlasSize;
+        }
+
+        var iterations = 1;
+        // Bound edgeLength so a runaway pack loop fails fast instead of spinning.
+        const int packEdgeLimit = 1_000_000;
+        // If the gutter ring alone exceeds the cap area, bin-pack convergence is
+        // geometrically impossible; bail before entering the retry loop.
+        if (_maxAtlasSize > 0 && edgeLength >= _maxAtlasSize)
+        {
+            int gPxThis = EffectiveGutterPixels(_clusterInfos.Count);
+            double gutterOnlyArea = (double)_clusterInfos.Count * (2 * gPxThis) * (2 * gPxThis);
+            double capArea = (double)_maxAtlasSize * _maxAtlasSize;
+            if (gutterOnlyArea > capArea)
+            {
+                throw new InvalidOperationException(
+                    $"Atlas pack infeasible (gutter floor): {_clusterInfos.Count} clusters × " +
+                    $"({2 * gPxThis})² gutter = {gutterOnlyArea / 1e6:F1}M px² " +
+                    $"exceeds cap area ({_maxAtlasSize}² = {capArea / 1e6:F1}M px²). " +
+                    "Bin-pack convergence is geometrically impossible. Options: " +
+                    "(a) raise --max-atlas-size for this depth, (b) reduce AtlasGutterPixels, " +
+                    "(c) aggregate UV islands before packing, (d) split this tile (deeper LOD).");
+            }
+        }
+        bool computedJumpUsed = false;
+        int postJumpRetries = 0;
+        const int postJumpRetryLimit = 200;
+        while (!TryPackClusterInfos(_clusterInfos, edgeLength, scale))
+        {
+            if (edgeLength > packEdgeLimit)
+                throw new InvalidOperationException(
+                    $"Atlas packing did not converge: edgeLength={edgeLength} " +
+                    $"exceeded {packEdgeLimit} after {iterations} retries " +
+                    $"({_clusterInfos.Count} clusters). " +
+                    "Likely a runaway gutter/insert formula — check before retrying.");
+            // At the cap, never grow past it — re-scale clusters down so they fit.
+            if (_maxAtlasSize > 0 && edgeLength >= _maxAtlasSize)
+            {
+                if (!computedJumpUsed)
+                {
+                    // Compute the area the current clusters need (with gutter),
+                    // derive the implied natural-pack edge, and pick a scale that
+                    // fits the cap with packing-efficiency headroom.
+                    double clusterAreaSum = 0;
+                    for (int i = 0; i < _clusterInfos.Count; i++)
+                    {
+                        var info = _clusterInfos[i];
+                        var matSrc = _materials[info.MaterialIndex];
+                        var texPath = string.IsNullOrEmpty(matSrc.Texture) ? matSrc.NormalMap : matSrc.Texture;
+                        if (string.IsNullOrEmpty(texPath)) continue;
+                        var srcInfo = TexturesCache.GetCappedDims(texPath);
+                        // Must match TryPackClusterInfos exactly (inflate by 2 × gutter, ceil to px).
+                        int gpx = EffectiveGutterPixels(_clusterInfos.Count);
+                        int clusterW = (int)Math.Max(Math.Ceiling(info.UvRect.Width * srcInfo.Width * scale), 1) + 2 * gpx;
+                        int clusterH = (int)Math.Max(Math.Ceiling(info.UvRect.Height * srcInfo.Height * scale), 1) + 2 * gpx;
+                        clusterAreaSum += (double)clusterW * clusterH;
+                    }
+                    // 0.55 packing-efficiency factor leaves headroom so the first
+                    // jump lands at or just below the cap.
+                    double impliedNaturalEdge = Math.Sqrt(clusterAreaSum / 0.55);
+                    if (impliedNaturalEdge > _maxAtlasSize)
+                    {
+                        double targetScale = scale * ((double)_maxAtlasSize / impliedNaturalEdge);
+                        scale = targetScale;
+                    }
+                    else
+                    {
+                        // Implied edge already fits — only gutter overhead remains.
+                        scale *= 0.98;
+                    }
+                    computedJumpUsed = true;
+                }
+                else
+                {
+                    postJumpRetries++;
+                    if (postJumpRetries > postJumpRetryLimit)
+                        throw new InvalidOperationException(
+                            $"Atlas packing did not converge after B.12 jump + " +
+                            $"{postJumpRetryLimit} fine-shrink retries " +
+                            $"({_clusterInfos.Count} clusters, scale={scale:F4}, cap={_maxAtlasSize}). " +
+                            "B.12 jump landed close but bin-pack still cannot fit. " +
+                            "Likely bin-pack fragmentation worse than the 0.55 efficiency model " +
+                            "or gutter-area-floor edge case. Options as in gutter-floor diagnostic.");
+                    scale *= 0.98;
+                }
+            }
+            else
+            {
+                var newEdgeLength = Math.Max(edgeLength + 10, (int)(edgeLength * 1.02));
+                if (_maxAtlasSize > 0 && newEdgeLength > _maxAtlasSize)
+                {
+                    // Crossed the cap mid-grow; clamp + re-scale instead.
+                    scale *= (double)_maxAtlasSize / newEdgeLength;
+                    edgeLength = _maxAtlasSize;
+                }
+                else
+                {
+                    edgeLength = newEdgeLength;
+                }
+            }
             iterations++;
         }
 
         AtlasEdgeLength = edgeLength;
-
-        Console.WriteLine(
-            $"Prepared atlas {edgeLength}x{edgeLength} [{Name}] ({totalTextureArea / edgeLength / edgeLength:F2} filled) ({iterations} iterations)");
     }
 
     /// <summary>
-    /// Phase 2: Fills the atlas textures for clusters belonging to the specified material.
-    /// This method can be called multiple times with different materials to fill the atlas incrementally.
-    /// Textures are loaded from TexturesCache.
-    /// Must be called after PrepareRepackTextures().
+    /// Fills the atlas with the clusters belonging to <paramref name="material"/>.
+    /// Call once per material after PrepareRepackTextures(); fills incrementally.
     /// </summary>
-    /// <param name="material">The material whose textures should be used to fill matching clusters</param>
     public void FillAtlases(Material material)
     {
         if (!_saveUv && !_saveVertexColor)
@@ -557,129 +689,186 @@ public class MeshT : IMesh
             return;
         }
 
-        Image<Rgba32> tex = null;
-
-        if (!string.IsNullOrEmpty(material.Texture))
+        // Skip the texture decode entirely when this tile doesn't reference the
+        // material — the decode is the dominant per-tile cost on large fixtures.
+        bool hasWork = false;
+        if (_saveUv && _clusterInfos != null)
         {
-            tex = TexturesCache.GetTexture(material.Texture);
+            foreach (var info in _clusterInfos)
+                if (info.MaterialIndex == materialIndex) { hasWork = true; break; }
         }
-
-        // Special case: When !_saveUv, extract vertex colors directly without atlas/clustering
-        if (_saveVertexColor && tex != null)
+        if (!hasWork && _saveVertexColor)
         {
-            Debug.WriteLine($"Extracting vertex colors for material {material.Name} [{Name}]");
-
-            var texWidth = tex.Width;
-            var texHeight = tex.Height;
-
-            // Extract colors for all faces using this material
-            for (var i = 0; i < _faces.Count; i++)
-            {
-                var face = _faces[i];
-                if (face.MaterialIndex != materialIndex)
-                    continue;
-
-                var vtA = _textureVertices[face.TextureIndexA];
-                var vtB = _textureVertices[face.TextureIndexB];
-                var vtC = _textureVertices[face.TextureIndexC];
-
-                var colorA = tex[(int)(vtA.X * texWidth), (int)((1 - vtA.Y) * texHeight)];
-                var colorB = tex[(int)(vtB.X * texWidth), (int)((1 - vtB.Y) * texHeight)];
-                var colorC = tex[(int)(vtC.X * texWidth), (int)((1 - vtC.Y) * texHeight)];
-
-                _vertexColors[face.IndexA] = Common.ConvertToRGB(colorA);
-                _vertexColors[face.IndexB] = Common.ConvertToRGB(colorB);
-                _vertexColors[face.IndexC] = Common.ConvertToRGB(colorC);
-            }
-
-            Debug.WriteLine($"Extracted vertex colors for material {material.Name}");
+            for (int i = 0; i < _faces.Count; i++)
+                if (_faces[i].MaterialIndex == materialIndex) { hasWork = true; break; }
         }
+        if (!hasWork) return;
 
-        if (!_saveUv)
-            return;
-
-        if (_clusterInfos == null || _clusterInfos.Count == 0)
-        {
-            Debug.WriteLine("No cluster infos available. Call PrepareRepackTextures() first.");
-            return;
-        }
-
-        Debug.WriteLine($"Filling atlases for material {material.Name} [{Name}]");
-
-        // Get only clusters for this material
-        var materialClusters = _clusterInfos.Where(c => c.MaterialIndex == materialIndex).ToList();
-
-        if (materialClusters.Count == 0)
-        {
-            Debug.WriteLine($"No clusters found for material {material.Name}");
-            return;
-        }
-
-        Image<Rgba32> norm = null;
-
+        // Hold a read lease on this material's source paths so a sibling tile's
+        // eviction can't dispose the shared decoded source while we sample it.
+        // Both AcquireRead calls are inside the try so the finally always
+        // releases on any exit path; a leaked lease would defer eviction forever.
         try
         {
-            if (!string.IsNullOrEmpty(material.NormalMap))
+            TexturesCache.AcquireRead(material.Texture);
+            TexturesCache.AcquireRead(material.NormalMap);
+            long decodeTicks = 0, resampleTicks = 0, stepStartTicks;
+            Image<Rgba32> tex = null;
+
+            if (!string.IsNullOrEmpty(material.Texture))
             {
-                norm = TexturesCache.GetTexture(material.NormalMap);
+                stepStartTicks = Stopwatch.GetTimestamp();
+                tex = TexturesCache.GetTexture(material.Texture, _maxAtlasSize);
+                decodeTicks += Stopwatch.GetTimestamp() - stepStartTicks;
             }
 
-            if (tex == null && norm == null)
+            if (_saveVertexColor && tex != null)
             {
-                Debug.WriteLine($"No textures available for material {material.Name}");
+                Debug.WriteLine($"Extracting vertex colors for material {material.Name} [{Name}]");
+
+                var texWidth = tex.Width;
+                var texHeight = tex.Height;
+
+                for (var i = 0; i < _faces.Count; i++)
+                {
+                    var face = _faces[i];
+                    if (face.MaterialIndex != materialIndex)
+                        continue;
+
+                    var vtA = _textureVertices[face.TextureIndexA];
+                    var vtB = _textureVertices[face.TextureIndexB];
+                    var vtC = _textureVertices[face.TextureIndexC];
+
+                    var colorA = tex[(int)(vtA.X * texWidth), (int)((1 - vtA.Y) * texHeight)];
+                    var colorB = tex[(int)(vtB.X * texWidth), (int)((1 - vtB.Y) * texHeight)];
+                    var colorC = tex[(int)(vtC.X * texWidth), (int)((1 - vtC.Y) * texHeight)];
+
+                    _vertexColors[face.IndexA] = Common.ConvertToRGB(colorA);
+                    _vertexColors[face.IndexB] = Common.ConvertToRGB(colorB);
+                    _vertexColors[face.IndexC] = Common.ConvertToRGB(colorC);
+                }
+
+                Debug.WriteLine($"Extracted vertex colors for material {material.Name}");
+            }
+
+            if (!_saveUv)
+                return;
+
+            if (_clusterInfos == null || _clusterInfos.Count == 0)
+            {
+                Debug.WriteLine("No cluster infos available. Call PrepareRepackTextures() first.");
                 return;
             }
 
-            var texWidth = tex?.Width ?? norm.Width;
-            var texHeight = tex?.Height ?? norm.Height;
+            Debug.WriteLine($"Filling atlases for material {material.Name} [{Name}]");
 
-            // Copy texture regions to atlas for this material's clusters
-            foreach (var info in materialClusters)
+            var materialClusters = _clusterInfos.Where(c => c.MaterialIndex == materialIndex).ToList();
+
+            if (materialClusters.Count == 0)
             {
-                var clusterX = (int)Math.Floor(info.UvRect.Left * (texWidth - 1));
-                var clusterY = (int)Math.Floor(info.UvRect.Top * (texHeight - 1));
-                var clusterW = (int)Math.Max(Math.Ceiling(info.UvRect.Width * texWidth), 1);
-                var clusterH = (int)Math.Max(Math.Ceiling(info.UvRect.Height * texHeight), 1);
-
-                var height = tex?.Height ?? norm.Height;
-                var adjustedSourceY = height - (clusterY + clusterH);
-                if (adjustedSourceY < 0)
-                    adjustedSourceY = (int)Math.Ceiling((double)(clusterY + clusterH) / height) * height -
-                                      (clusterY + clusterH);
-
-                var adjustedDestY = Math.Max(AtlasEdgeLength - (info.PackedRect.Y + clusterH), 0);
-
-                if (tex != null)
-                {
-                    if (_atlasTexture == null)
-                        _atlasTexture = new Image<Rgba32>(AtlasEdgeLength, AtlasEdgeLength);
-                    
-                    Common.CopyImage(tex, _atlasTexture, clusterX, adjustedSourceY, clusterW, clusterH,
-                        info.PackedRect.X, adjustedDestY);
-                }
-
-                if (norm != null)
-                {
-                    if (_atlasNormalMap == null)
-                        _atlasNormalMap = new Image<Rgba32>(AtlasEdgeLength, AtlasEdgeLength);
-                    
-                    Common.CopyImage(norm, _atlasNormalMap, clusterX, adjustedSourceY, clusterW, clusterH,
-                        info.PackedRect.X, adjustedDestY);
-                }
+                Debug.WriteLine($"No clusters found for material {material.Name}");
+                return;
             }
 
-            Debug.WriteLine($"Filled {materialClusters.Count} clusters for material {material.Name}");
+            Image<Rgba32> norm = null;
+
+            try
+            {
+                if (!string.IsNullOrEmpty(material.NormalMap))
+                {
+                    stepStartTicks = Stopwatch.GetTimestamp();
+                    norm = TexturesCache.GetTexture(material.NormalMap, _maxAtlasSize);
+                    decodeTicks += Stopwatch.GetTimestamp() - stepStartTicks;
+                }
+
+                if (tex == null && norm == null)
+                {
+                    Debug.WriteLine($"No textures available for material {material.Name}");
+                    return;
+                }
+
+                var texWidth = tex?.Width ?? norm.Width;
+                var texHeight = tex?.Height ?? norm.Height;
+
+                stepStartTicks = Stopwatch.GetTimestamp();
+                foreach (var info in materialClusters)
+                {
+                    var clusterX = (int)Math.Floor(info.UvRect.Left * (texWidth - 1));
+                    var clusterY = (int)Math.Floor(info.UvRect.Top * (texHeight - 1));
+                    var clusterW = (int)Math.Max(Math.Ceiling(info.UvRect.Width * texWidth), 1);
+                    var clusterH = (int)Math.Max(Math.Ceiling(info.UvRect.Height * texHeight), 1);
+
+                    var height = tex?.Height ?? norm.Height;
+                    var adjustedSourceY = height - (clusterY + clusterH);
+                    if (adjustedSourceY < 0)
+                        adjustedSourceY = (int)Math.Ceiling((double)(clusterY + clusterH) / height) * height -
+                                          (clusterY + clusterH);
+
+                    // Dest height/Y uses PackedRect (which may have been scaled
+                    // down in PrepareRepackTextures if natural exceeded cap).
+                    int destW = info.PackedRect.Width;
+                    int destH = info.PackedRect.Height;
+                    var adjustedDestY = Math.Max(AtlasEdgeLength - (info.PackedRect.Y + destH), 0);
+
+                    if (tex != null)
+                    {
+                        if (_atlasTexture == null)
+                            _atlasTexture = new Image<Rgba32>(AtlasEdgeLength, AtlasEdgeLength);
+
+                        if (_useSingleResamplePath)
+                        {
+                            Common.CopyImage(tex, _atlasTexture,
+                                clusterX, adjustedSourceY, clusterW, clusterH,
+                                info.PackedRect.X, adjustedDestY);
+                        }
+                        else
+                        {
+                            Common_Hlod.CopyImageScaled(tex, _atlasTexture,
+                                clusterX, adjustedSourceY, clusterW, clusterH,
+                                info.PackedRect.X, adjustedDestY, destW, destH);
+                        }
+                    }
+
+                    if (norm != null)
+                    {
+                        if (_atlasNormalMap == null)
+                            _atlasNormalMap = new Image<Rgba32>(AtlasEdgeLength, AtlasEdgeLength);
+
+                        if (_useSingleResamplePath)
+                        {
+                            Common.CopyImage(norm, _atlasNormalMap,
+                                clusterX, adjustedSourceY, clusterW, clusterH,
+                                info.PackedRect.X, adjustedDestY);
+                        }
+                        else
+                        {
+                            Common_Hlod.CopyImageScaled(norm, _atlasNormalMap,
+                                clusterX, adjustedSourceY, clusterW, clusterH,
+                                info.PackedRect.X, adjustedDestY, destW, destH);
+                        }
+                    }
+                }
+                resampleTicks += Stopwatch.GetTimestamp() - stepStartTicks;
+                Console.WriteLine($" [fillsplit] {FilePath} mat={materialIndex} decodeMs={decodeTicks * 1000.0 / Stopwatch.Frequency:F1} resampleMs={resampleTicks * 1000.0 / Stopwatch.Frequency:F1} clusters={materialClusters.Count}");
+
+                Debug.WriteLine($"Filled {materialClusters.Count} clusters for material {material.Name}");
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"Error filling atlas for material {material.Name}: {e}");
+                throw;
+            }
         }
-        catch (Exception e)
+        finally
         {
-            Console.WriteLine($"Error filling atlas for material {material.Name}: {e}");
-            throw;
+            TexturesCache.ReleaseRead(material.Texture);
+            TexturesCache.ReleaseRead(material.NormalMap);
         }
     }
 
     /// <summary>
-    /// Phase 3: Finalizes texture repacking by updating UV coordinates, saving atlases to disk, and updating materials.
-    /// Must be called after PrepareRepackTextures() and FillAtlases().
+    /// Rewrites UVs to atlas space, writes the atlas files, and merges materials.
+    /// Call after PrepareRepackTextures() and FillAtlases().
     /// </summary>
     public void SaveAtlasesAndUpdateMaterial()
     {
@@ -709,19 +898,18 @@ public class MeshT : IMesh
 
             Debug.WriteLine($"Saving atlases and updating material for {Name}");
 
-            // Update UV coordinates for all faces based on packed positions
             var newTextureVertices = new Dictionary<Vertex2, int>(_textureVertices.Count);
 
             foreach (var info in _clusterInfos)
             {
-                var material = _materials[info.MaterialIndex];
-                var texturePath = string.IsNullOrEmpty(material.Texture) ? material.NormalMap : material.Texture;
-                var textureInfo = TexturesCache.GetTextureInfo(texturePath);
-                var texWidth = textureInfo.Width;
-                var texHeight = textureInfo.Height;
-
-                var scaleX = (double)texWidth / AtlasEdgeLength;
-                var scaleY = (double)texHeight / AtlasEdgeLength;
+                // Map source UVs to atlas UVs via the cluster's actual packed-rect
+                // extent, not the source texture size — when PackedRects are scaled
+                // down to fit the cap, a texture-size scale would spill UVs into the
+                // neighbouring clusters.
+                double atlasUvWidth = info.PackedRect.Width / (double)AtlasEdgeLength;
+                double atlasUvHeight = info.PackedRect.Height / (double)AtlasEdgeLength;
+                double invUvW = info.UvRect.Width > 0 ? 1.0 / info.UvRect.Width : 0;
+                double invUvH = info.UvRect.Height > 0 ? 1.0 / info.UvRect.Height : 0;
 
                 foreach (var faceIndex in info.Cluster)
                 {
@@ -731,15 +919,15 @@ public class MeshT : IMesh
                     var vtB = _textureVertices[face.TextureIndexB];
                     var vtC = _textureVertices[face.TextureIndexC];
 
-                    // Calculate offset from cluster origin
-                    var dxA = Math.Max(0, vtA.X - info.UvRect.X) * scaleX;
-                    var dyA = Math.Max(0, vtA.Y - info.UvRect.Y) * scaleY;
-                    var dxB = Math.Max(0, vtB.X - info.UvRect.X) * scaleX;
-                    var dyB = Math.Max(0, vtB.Y - info.UvRect.Y) * scaleY;
-                    var dxC = Math.Max(0, vtC.X - info.UvRect.X) * scaleX;
-                    var dyC = Math.Max(0, vtC.Y - info.UvRect.Y) * scaleY;
+                    // Offset within cluster in source UV space, normalized
+                    // to [0, atlas-UV-extent] of this cluster's packed rect.
+                    var dxA = Math.Max(0, vtA.X - info.UvRect.X) * invUvW * atlasUvWidth;
+                    var dyA = Math.Max(0, vtA.Y - info.UvRect.Y) * invUvH * atlasUvHeight;
+                    var dxB = Math.Max(0, vtB.X - info.UvRect.X) * invUvW * atlasUvWidth;
+                    var dyB = Math.Max(0, vtB.Y - info.UvRect.Y) * invUvH * atlasUvHeight;
+                    var dxC = Math.Max(0, vtC.X - info.UvRect.X) * invUvW * atlasUvWidth;
+                    var dyC = Math.Max(0, vtC.Y - info.UvRect.Y) * invUvH * atlasUvHeight;
 
-                    // Calculate new UV coordinates in atlas space
                     var relX = info.PackedRect.X / (double)AtlasEdgeLength;
                     var relY = info.PackedRect.Y / (double)AtlasEdgeLength;
 
@@ -753,10 +941,11 @@ public class MeshT : IMesh
                 }
             }
 
-            // Update texture vertices list
             _textureVertices = newTextureVertices.OrderBy(item => item.Value).Select(item => item.Key).ToList();
 
-            // Save atlases to disk
+            // The caller creates this dir, but a bake race has dropped it before
+            // the Save below; re-create defensively (no-op if it exists).
+            Directory.CreateDirectory(folderPath);
             var textureFileName = $"{Name}-texture-diffuse-atlas.jpg";
             var normalFileName = $"{Name}-texture-normal-atlas.png"; // normal maps stay PNG (lossless)
 
@@ -768,32 +957,71 @@ public class MeshT : IMesh
 
             if (hasAtlasTexture)
             {
+                // Bleed cluster edge pixels into the surrounding empty atlas space
+                // so bilinear/mip sampling at cluster edges doesn't pick up black
+                // and show dark fringes ("cracks") along tile boundaries.
+                Common_Hlod.DilateAtlasBleed(_atlasTexture, bleed: 16);
                 var compressedTextureWidth = (int)(_atlasTexture.Width * _textureQuality);
-                var targetPowerOfTwo = Math.Min(Common.PreviousPowerOfTwo(compressedTextureWidth), _maxAtlasSize);
+                // Guard against an off-by-one from resize or a non-power-of-2 pack.
+                var targetSize = Math.Min(compressedTextureWidth, _maxAtlasSize);
+                // KTX2/basisu (and s3tc-only WebGL clients) require dims to be
+                // multiples of 4, else the tile samples opaque black. Floor to mult-4.
+                targetSize = Math.Max(targetSize & ~3, 4);
+                var mode = _useSingleResamplePath ? "single-resample" : "per-cluster";
+                Console.WriteLine(
+                    $" [HLOD atlas] {FilePath} natural={_naturalAtlasEdgeLength} cap={_maxAtlasSize} final={targetSize} mode={mode} clusters={_clusterInfos?.Count ?? 0}");
 
-                if (_atlasTexture.Width != targetPowerOfTwo)
+                if (_atlasTexture.Width != targetSize)
                 {
-                    var quality = (float)targetPowerOfTwo / _atlasTexture.Width;
+                    var quality = (float)targetSize / _atlasTexture.Width;
                     Debug.WriteLine(
-                        $"Downscale {_atlasTexture.Width} => {targetPowerOfTwo} {quality:F2}% (target Quality {_textureQuality:F2}) [{Name}]");
+                        $"Downscale {_atlasTexture.Width} => {targetSize} {quality:F2}% (target Quality {_textureQuality:F2}) [{Name}]");
                     _atlasTexture.Mutate(x => x.Resize(new ResizeOptions
                     {
-                        Size = new Size(targetPowerOfTwo, targetPowerOfTwo),
-                        Mode = ResizeMode.Max
+                        Size = new Size(targetSize, targetSize),
+                        Mode = ResizeMode.Max,
+                        Sampler = KnownResamplers.Lanczos3,
                     }));
                 }
 
-                _atlasTexture.Save(pathTexture, new SixLabors.ImageSharp.Formats.Jpeg.JpegEncoder { Quality = _jpegQuality });
+                // Optional unsharp before JPEG encode; strength 0..1 maps to
+                // GaussianSharpen sigma 0..3.0.
+                if (AtlasUnsharpAmount > 0.0)
+                {
+                    float sigma = (float)(AtlasUnsharpAmount * 3.0);
+                    _atlasTexture.Mutate(x => x.GaussianSharpen(sigma));
+                }
+                int _jq = int.TryParse(System.Environment.GetEnvironmentVariable("HLOD_JPEG_QUALITY"), out var _qv) && _qv is > 0 and <= 100 ? _qv : _jpegQuality;
+                _atlasTexture.Save(pathTexture, new SixLabors.ImageSharp.Formats.Jpeg.JpegEncoder { Quality = _jq });
                 Debug.WriteLine($"Saved texture atlas to {pathTexture}");
             }
 
             if (_atlasNormalMap != null)
             {
+                var normalTargetSize = Math.Min((int)(_atlasNormalMap.Width * _textureQuality), _maxAtlasSize);
+                // Same multiple-of-4 floor as the diffuse atlas above (KTX2/basisu).
+                normalTargetSize = Math.Max(normalTargetSize & ~3, 4);
+                if (!hasAtlasTexture)
+                {
+                    var mode = _useSingleResamplePath ? "single-resample" : "per-cluster";
+                    Console.WriteLine(
+                        $" [HLOD atlas] {FilePath} natural={_naturalAtlasEdgeLength} cap={_maxAtlasSize} final={normalTargetSize} mode={mode}");
+                }
+
+                if (_atlasNormalMap.Width != normalTargetSize)
+                {
+                    _atlasNormalMap.Mutate(x => x.Resize(new ResizeOptions
+                    {
+                        Size = new Size(normalTargetSize, normalTargetSize),
+                        Mode = ResizeMode.Max,
+                        Sampler = KnownResamplers.Lanczos3
+                    }));
+                }
+
                 _atlasNormalMap.Save(pathNormal);
                 Debug.WriteLine($"Saved normal map atlas to {pathNormal}");
             }
 
-            // Create merged material
             var firstMaterial = _materials[_clusterInfos[0].MaterialIndex];
             var mergedMaterial = new Material($"{Name}-material", null, null,
                 firstMaterial.AmbientColor, firstMaterial.DiffuseColor, firstMaterial.SpecularColor,
@@ -805,15 +1033,11 @@ public class MeshT : IMesh
             if (hasAtlasNormalMap)
                 mergedMaterial.NormalMap = normalFileName;
 
-            // Replace all materials with merged material
             _materials.Clear();
             _materials.Add(mergedMaterial);
 
-            // Update all faces to use the merged material
             for (var i = 0; i < _faces.Count; i++)
                 _faces[i].MaterialIndex = 0;
-
-            Console.WriteLine($"Material updated and atlases saved for {Name}");
         }
         catch (Exception e)
         {
@@ -831,164 +1055,82 @@ public class MeshT : IMesh
     }
 
     /// <summary>
-    /// Helper method for bin packing clusters without loading textures.
-    /// Fills the PackedRect property of each ClusterInfo.
+    /// Bin-packs clusters (no texture load), filling each ClusterInfo.PackedRect.
+    /// <paramref name="scale"/> is the final-atlas-pixel / source-pixel ratio: 1.0
+    /// when the natural pack fits the cap, smaller when clusters must shrink to fit.
+    /// Insertion size is inflated by 2 × gutter; the inner rect is stored.
     /// </summary>
-    private bool TryPackClusterInfos(List<ClusterInfo> clusterInfos, int edgeLength)
-    {
-        var binPack = new MaxRectanglesBinPack(edgeLength, edgeLength, false);
+    // Above this cluster count, use the O(N × W) SkylineBinPack instead of
+    // MaxRectanglesBinPack, whose RectangleBestAreaFit is O(N²) per insert and
+    // stalls on tiles with thousands of UV islands.
+    private static readonly int HighClusterFastPathThreshold =
+        int.TryParse(System.Environment.GetEnvironmentVariable("HLOD_FASTPACK_THRESHOLD"), out var _t) && _t > 0
+            ? _t : 256;
 
+    private bool TryPackClusterInfosAtNaturalSize(int initialEdgeLength, int maxEdgeLength, out int edgeLength)
+    {
+        edgeLength = initialEdgeLength;
+        while (!TryPackClusterInfos(_clusterInfos, edgeLength, 1.0))
+        {
+            var newEdgeLength = Math.Max(edgeLength + 10, (int)(edgeLength * 1.02));
+            if (newEdgeLength > maxEdgeLength)
+                return false;
+
+            edgeLength = newEdgeLength;
+        }
+
+        return true;
+    }
+
+    private bool TryPackClusterInfos(List<ClusterInfo> clusterInfos, int edgeLength, double scale)
+    {
+        int g = EffectiveGutterPixels(clusterInfos.Count);
+        bool useFastPath = clusterInfos.Count > HighClusterFastPathThreshold;
+
+        if (useFastPath)
+        {
+            var skyline = new SkylineBinPack(edgeLength, edgeLength);
+            for (var i = 0; i < clusterInfos.Count; i++)
+            {
+                var info = clusterInfos[i];
+                var material = _materials[info.MaterialIndex];
+                var texturePath = string.IsNullOrEmpty(material.Texture) ? material.NormalMap : material.Texture;
+                var textureInfo = TexturesCache.GetCappedDims(texturePath, _maxAtlasSize);
+                var clusterW = (int)Math.Max(Math.Ceiling(info.UvRect.Width * textureInfo.Width * scale), 1);
+                var clusterH = (int)Math.Max(Math.Ceiling(info.UvRect.Height * textureInfo.Height * scale), 1);
+                var placed = skyline.Insert(clusterW + 2 * g, clusterH + 2 * g);
+                if (placed.Width == 0) return false;
+                info.PackedRect = new Rectangle(placed.X + g, placed.Y + g, clusterW, clusterH);
+            }
+            return true;
+        }
+
+        var binPack = new MaxRectanglesBinPack(edgeLength, edgeLength, false);
         for (var i = 0; i < clusterInfos.Count; i++)
         {
             var info = clusterInfos[i];
             var material = _materials[info.MaterialIndex];
             var texturePath = string.IsNullOrEmpty(material.Texture) ? material.NormalMap : material.Texture;
-            var textureInfo = TexturesCache.GetTextureInfo(texturePath);
-            var clusterW = (int)Math.Max(Math.Ceiling(info.UvRect.Width * textureInfo.Width), 1);
-            var clusterH = (int)Math.Max(Math.Ceiling(info.UvRect.Height * textureInfo.Height), 1);
-
-            var packedRect = binPack.Insert(clusterW, clusterH, FreeRectangleChoiceHeuristic.RectangleBestAreaFit);
+            var textureInfo = TexturesCache.GetCappedDims(texturePath, _maxAtlasSize);
+            var clusterW = (int)Math.Max(Math.Ceiling(info.UvRect.Width * textureInfo.Width * scale), 1);
+            var clusterH = (int)Math.Max(Math.Ceiling(info.UvRect.Height * textureInfo.Height * scale), 1);
+            var packedRect = binPack.Insert(clusterW + 2 * g, clusterH + 2 * g, FreeRectangleChoiceHeuristic.RectangleBestAreaFit);
 
             if (packedRect.Width == 0)
                 return false;
 
-            info.PackedRect = packedRect;
+            info.PackedRect = new Rectangle(
+                packedRect.X + g,
+                packedRect.Y + g,
+                clusterW,
+                clusterH);
         }
 
         return true;
     }
 
-    private bool TryPackClusters(List<ClusterInfo> clusterInfos, int edgeLength,
-        Dictionary<int, (int width, int height)> textureDimensions, out Image<Rgba32> atlasTexture,
-        out Image<Rgba32> atlasNormalMap)
-    {
-        var binPack = new MaxRectanglesBinPack(edgeLength, edgeLength, false);
-        atlasTexture = null;
-        atlasNormalMap = null;
-        var hasTex = false;
-        var hasNorm = false;
 
-        for (var i = 0; i < clusterInfos.Count; i++)
-        {
-            var info = clusterInfos[i];
-            var (texWidth, texHeight) = textureDimensions[info.MaterialIndex];
-
-            var clusterW = (int)Math.Max(Math.Ceiling(info.UvRect.Width * texWidth), 1);
-            var clusterH = (int)Math.Max(Math.Ceiling(info.UvRect.Height * texHeight), 1);
-
-            var packedRect = binPack.Insert(clusterW, clusterH, FreeRectangleChoiceHeuristic.RectangleBestAreaFit);
-
-            if (packedRect.Width == 0)
-                return false;
-
-            info.PackedRect = packedRect;
-        }
-
-        atlasTexture = new Image<Rgba32>(edgeLength, edgeLength);
-        atlasNormalMap = new Image<Rgba32>(edgeLength, edgeLength);
-
-        var clusterInfoByMaterial = clusterInfos.GroupBy(c => c.MaterialIndex);
-
-        foreach (var group in clusterInfoByMaterial)
-        {
-            var materialIndex = group.Key;
-            Image<Rgba32> tex = null;
-            Image<Rgba32> norm = null;
-
-            try
-            {
-                var material = _materials[materialIndex];
-                var (texWidth, texHeight) = textureDimensions[materialIndex];
-
-                if (!string.IsNullOrEmpty(material.Texture))
-                {
-                    tex = Image.Load<Rgba32>(material.Texture);
-                }
-
-                if (!string.IsNullOrEmpty(material.NormalMap))
-                {
-                    norm = Image.Load<Rgba32>(material.NormalMap);
-                }
-
-                foreach (var info in group)
-                {
-                    var clusterX = (int)Math.Floor(info.UvRect.Left * (texWidth - 1));
-                    var clusterY = (int)Math.Floor(info.UvRect.Top * (texHeight - 1));
-                    var clusterW = (int)Math.Max(Math.Ceiling(info.UvRect.Width * texWidth), 1);
-                    var clusterH = (int)Math.Max(Math.Ceiling(info.UvRect.Height * texHeight), 1);
-
-                    var height = tex?.Height ?? norm.Height;
-                    var adjustedSourceY = height - (clusterY + clusterH);
-                    if (adjustedSourceY < 0)
-                        adjustedSourceY = (int)Math.Ceiling((double)(clusterY + clusterH) / height) * height -
-                                          (clusterY + clusterH);
-
-                    var adjustedDestY = Math.Max(edgeLength - (info.PackedRect.Y + clusterH), 0);
-
-                    if (tex != null)
-                    {
-                        hasTex = true;
-                        Common.CopyImage(tex, atlasTexture, clusterX, adjustedSourceY, clusterW, clusterH,
-                            info.PackedRect.X, adjustedDestY);
-
-                        if (_saveVertexColor)
-                            foreach (var faceIndex in info.Cluster)
-                            {
-                                var face = _faces[faceIndex];
-                                var vtA = _textureVertices[face.TextureIndexA];
-                                var vtB = _textureVertices[face.TextureIndexB];
-                                var vtC = _textureVertices[face.TextureIndexC];
-
-                                var colorA = tex[(int)(vtA.X * texWidth), (int)((1 - vtA.Y) * texHeight)];
-                                var colorB = tex[(int)(vtB.X * texWidth), (int)((1 - vtB.Y) * texHeight)];
-                                var colorC = tex[(int)(vtC.X * texWidth), (int)((1 - vtC.Y) * texHeight)];
-
-                                _vertexColors[face.IndexA] = Common.ConvertToRGB(colorA);
-                                _vertexColors[face.IndexB] = Common.ConvertToRGB(colorB);
-                                _vertexColors[face.IndexC] = Common.ConvertToRGB(colorC);
-                            }
-                    }
-
-                    if (norm != null)
-                    {
-                        hasNorm = true;
-                        Common.CopyImage(norm, atlasNormalMap, clusterX, adjustedSourceY, clusterW, clusterH,
-                            info.PackedRect.X, adjustedDestY);
-                    }
-                }
-            }
-            catch (Exception e)
-            {
-                Console.WriteLine(e);
-                throw;
-            }
-            finally
-            {
-                tex?.Dispose();
-                norm?.Dispose();
-            }
-        }
-
-        if (!hasTex)
-        {
-            atlasTexture.Dispose();
-            atlasTexture = null;
-        }
-
-        if (!hasNorm)
-        {
-            atlasNormalMap.Dispose();
-            atlasNormalMap = null;
-        }
-
-        return true;
-    }
-
-    /// <summary>
-    ///     Calculates the bounding box of a set of points.
-    /// </summary>
-    /// <param name="cluster"></param>
-    /// <returns></returns>
+    /// <summary>UV-space bounding box of a cluster's faces.</summary>
     private RectangleF GetClusterRect(IReadOnlyList<int> cluster)
     {
         double maxX = double.MinValue, maxY = double.MinValue;
@@ -1012,66 +1154,31 @@ public class MeshT : IMesh
         return new RectangleF((float)minX, (float)minY, (float)(maxX - minX), (float)(maxY - minY));
     }
 
+    // BFS over face adjacency: the cluster list doubles as the queue (index walk),
+    // and a single Visited set keeps it O(F + edges) per material.
     private static List<List<int>> GetFacesClusters(IEnumerable<int> facesIndexes,
         IReadOnlyDictionary<int, List<int>> facesMapper)
     {
         var clusters = new List<List<int>>();
-        var remainingFacesIndexes = new List<int>(facesIndexes);
+        var visited = new HashSet<int>();
 
-        var currentCluster = new List<int> { remainingFacesIndexes[0] };
-        var currentClusterCache = new HashSet<int> { remainingFacesIndexes[0] };
-        remainingFacesIndexes.RemoveAt(0);
-
-        var lastRemainingFacesCount = remainingFacesIndexes.Count;
-
-        while (remainingFacesIndexes.Count > 0)
+        foreach (var seed in facesIndexes)
         {
-            var cnt = currentCluster.Count;
-
-            for (var index = 0; index < currentCluster.Count; index++)
+            if (!visited.Add(seed)) continue;
+            var cluster = new List<int> { seed };
+            for (int i = 0; i < cluster.Count; i++)
             {
-                var faceIndex = currentCluster[index];
-
-                if (!facesMapper.TryGetValue(faceIndex, out var connectedFaces))
-                    continue;
-
-                for (var i = 0; i < connectedFaces.Count; i++)
+                int faceIndex = cluster[i];
+                if (!facesMapper.TryGetValue(faceIndex, out var connected)) continue;
+                for (int k = 0; k < connected.Count; k++)
                 {
-                    var connectedFace = connectedFaces[i];
-                    if (currentClusterCache.Contains(connectedFace)) continue;
-
-                    currentCluster.Add(connectedFace);
-                    currentClusterCache.Add(connectedFace);
-                    remainingFacesIndexes.Remove(connectedFace);
+                    int n = connected[k];
+                    if (visited.Add(n)) cluster.Add(n);
                 }
             }
-
-            // No new face was added
-            if (cnt == currentCluster.Count)
-            {
-                // Add the cluster
-                clusters.Add(currentCluster);
-
-                // If no more faces, exit
-                if (remainingFacesIndexes.Count == 0) break;
-
-                // Let's continue with the next cluster
-                currentCluster = [remainingFacesIndexes[0]];
-                currentClusterCache = [remainingFacesIndexes[0]];
-                remainingFacesIndexes.RemoveAt(0);
-            }
-
-            if (lastRemainingFacesCount == remainingFacesIndexes.Count)
-            {
-                Debug.WriteLine("Discarding " + remainingFacesIndexes.Count + " faces.");
-                break;
-            }
-
-            lastRemainingFacesCount = remainingFacesIndexes.Count;
+            clusters.Add(cluster);
         }
 
-        // Add the cluster
-        clusters.Add(currentCluster);
         return clusters;
     }
 
@@ -1196,7 +1303,6 @@ public class MeshT : IMesh
         y /= _faces.Count;
         z /= _faces.Count;
 
-        // Calculate x, y and z angles
         var xAngle = Math.Atan2(y, z);
         var yAngle = Math.Atan2(x, z);
         var zAngle = Math.Atan2(y, x);
@@ -1227,10 +1333,8 @@ public class MeshT : IMesh
 
     public void WriteObj(string path, bool removeUnused = true)
     {
-        // Phase 1: Prepare
         PrepareRepackTextures(removeUnused);
 
-        // Phase 2: Fill atlases
         for (var i = 0; i < _materials.Count; i++)
         {
             var material = _materials[i];
@@ -1239,10 +1343,7 @@ public class MeshT : IMesh
 
         FilePath = path;
 
-        // Phase 3: Save atlases and update materials
         SaveAtlasesAndUpdateMaterial();
-
-        // Phase 4: Save atlases and update materials
         WriteGeometry();
     }
 
@@ -1277,73 +1378,6 @@ public class MeshT : IMesh
         _vertices = newVertexes.Keys.ToList();
     }
 
-    private void RemoveUnusedVerticesAndUvs()
-    {
-        var newVertexes = new Dictionary<Vertex3, int>(_vertices.Count);
-        var newUvs = new Dictionary<Vertex2, int>(_textureVertices.Count);
-        var newMaterials = new Dictionary<Material, int>(_materials.Count);
-
-        for (var f = 0; f < _faces.Count; f++)
-        {
-            var face = _faces[f];
-
-            // Vertices
-
-            var vA = _vertices[face.IndexA];
-            var vB = _vertices[face.IndexB];
-            var vC = _vertices[face.IndexC];
-
-            if (!newVertexes.TryGetValue(vA, out var newVA))
-                newVA = newVertexes.AddIndex(vA);
-
-            face.IndexA = newVA;
-
-            if (!newVertexes.TryGetValue(vB, out var newVB))
-                newVB = newVertexes.AddIndex(vB);
-
-            face.IndexB = newVB;
-
-            if (!newVertexes.TryGetValue(vC, out var newVC))
-                newVC = newVertexes.AddIndex(vC);
-
-            face.IndexC = newVC;
-
-            // Texture vertices
-
-            var uvA = _textureVertices[face.TextureIndexA];
-            var uvB = _textureVertices[face.TextureIndexB];
-            var uvC = _textureVertices[face.TextureIndexC];
-
-            if (!newUvs.TryGetValue(uvA, out var newUvA))
-                newUvA = newUvs.AddIndex(uvA);
-
-            face.TextureIndexA = newUvA;
-
-            if (!newUvs.TryGetValue(uvB, out var newUvB))
-                newUvB = newUvs.AddIndex(uvB);
-
-            face.TextureIndexB = newUvB;
-
-            if (!newUvs.TryGetValue(uvC, out var newUvC))
-                newUvC = newUvs.AddIndex(uvC);
-
-            face.TextureIndexC = newUvC;
-
-            // Materials
-
-            var material = _materials[face.MaterialIndex];
-
-            if (!newMaterials.TryGetValue(material, out var newMaterial))
-                newMaterial = newMaterials.AddIndex(material);
-
-            face.MaterialIndex = newMaterial;
-        }
-
-        _vertices = newVertexes.Keys.ToList();
-        _textureVertices = newUvs.Keys.ToList();
-        _materials = newMaterials.Keys.ToList();
-    }
-
     public void WriteMaterial()
     {
         var path = Path.ChangeExtension(FilePath, "mtl");
@@ -1370,14 +1404,12 @@ public class MeshT : IMesh
         writer.Write("o ");
         writer.WriteLine(string.IsNullOrWhiteSpace(Name) ? DefaultName : Name);
 
-        // Write material library reference if we have textures
         if (hasTextures)
         {
             var materialsPath = Path.ChangeExtension(FilePath, "mtl");
             writer.WriteLine("mtllib {0}", Path.GetFileName(materialsPath));
         }
 
-        // Write vertices
         for (var i = 0; i < _vertices.Count; i++)
         {
             var vertex = _vertices[i];
@@ -1389,7 +1421,6 @@ public class MeshT : IMesh
             writer.Write(" ");
             writer.Write(vertex.Z);
 
-            // Write vertex colors if available
             if (_saveVertexColor && _vertexColors.Count > 0)
             {
                 var vertexColor = _vertexColors[i];
@@ -1404,7 +1435,6 @@ public class MeshT : IMesh
             writer.WriteLine();
         }
 
-        // Write texture vertices if we have textures and should save UVs
         if (hasTextures && _saveUv)
         {
             foreach (var textureVertex in _textureVertices)
@@ -1416,15 +1446,12 @@ public class MeshT : IMesh
             }
         }
 
-        // Write faces
         if (hasTextures)
         {
-            // Group faces by material
             var materialFaces = _faces
                 .GroupBy(f => f.MaterialIndex)
                 .OrderBy(g => g.Key);
 
-            // Write faces grouped by material
             foreach (var group in materialFaces)
             {
                 writer.WriteLine($"usemtl {_materials[group.Key].Name}");
@@ -1435,7 +1462,6 @@ public class MeshT : IMesh
         }
         else
         {
-            // Write faces without material/texture references
             for (var index = 0; index < _faces.Count; index++)
             {
                 var face = _faces[index];

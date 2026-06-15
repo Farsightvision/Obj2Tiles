@@ -7,8 +7,25 @@
 [![Build & Test](https://github.com/OpenDroneMap/Obj2Tiles/actions/workflows/build-test.yml/badge.svg)](https://github.com/OpenDroneMap/Obj2Tiles/actions/workflows/build-test.yml)
 [![Publish](https://github.com/OpenDroneMap/Obj2Tiles/actions/workflows/publish.yml/badge.svg)](https://github.com/OpenDroneMap/Obj2Tiles/actions/workflows/publish.yml)
 
-Obj2Tiles is a fully fledged tool to convert OBJ files to 3D Tiles format. 
+Obj2Tiles is a fully fledged tool to convert OBJ files to 3D Tiles format.
 It creates multiple LODs, splits the mesh and repacks the textures.
+
+Two pipelines ship in the binary:
+
+- **Flat-grid LOD (default)** — the original `--lods` / `--divisions`
+  pipeline. Produces a flat list of LODs and tiles, byte-equivalent to
+  the master output for the same `--lods` schedule. No flag required;
+  this is the default behavior.
+- **Hierarchical LODs (opt-in via `--hierarchical-lods`)** — conformal
+  hierarchical 3D Tiles with per-tile UV-aware simplification, per-depth
+  atlas caps, parent/child GLB packs, and texture-aware geometric error.
+  Designed for photogrammetry meshes that need crack-free LOD
+  transitions.
+
+The hierarchical pipeline supports `--leaf-no-mips` (writes sampler
+`minFilter=LINEAR` so leaves sample the base atlas only) and
+`--quantize-glbs` (KHR_mesh_quantization + optional KTX2 supercompression
+via gltfpack). Run `Obj2Tiles --help` for the full flag list.
 
 ## Installation
 
