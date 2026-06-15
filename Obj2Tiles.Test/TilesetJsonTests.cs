@@ -47,13 +47,16 @@ public class TilesetJsonTests
         Assert.That(ts.GetProperty("asset").GetProperty("gltfUpAxis").GetString(), Is.EqualTo("Z"));
         Assert.That(ts.GetProperty("geometricError").GetDouble(), Is.EqualTo(10.0).Within(1e-9));
 
-        var tileRoot = ts.GetProperty("root");
-        Assert.That(tileRoot.GetProperty("geometricError").GetDouble(), Is.EqualTo(10.0).Within(1e-9));
-        Assert.That(tileRoot.GetProperty("refine").GetString(), Is.EqualTo("REPLACE"));
-        Assert.That(tileRoot.GetProperty("transform").GetArrayLength(), Is.EqualTo(16), "root carries the ECEF transform");
-        Assert.That(tileRoot.GetProperty("boundingVolume").GetProperty("box").GetArrayLength(), Is.EqualTo(12),
+        var wrapper = ts.GetProperty("root");
+        Assert.That(wrapper.GetProperty("geometricError").GetDouble(), Is.EqualTo(10.0).Within(1e-9));
+        Assert.That(wrapper.GetProperty("refine").GetString(), Is.EqualTo("REPLACE"));
+        Assert.That(wrapper.GetProperty("transform").GetArrayLength(), Is.EqualTo(16), "wrapper root carries the ECEF transform");
+        Assert.That(wrapper.GetProperty("boundingVolume").GetProperty("box").GetArrayLength(), Is.EqualTo(12),
             "3D-Tiles box = center + 3 half-axis vectors");
-        Assert.That(tileRoot.GetProperty("content").GetProperty("uri").GetString(),
+        Assert.That(wrapper.TryGetProperty("content", out _), Is.False, "wrapper root is content-less");
+
+        var contentTile = wrapper.GetProperty("children")[0];
+        Assert.That(contentTile.GetProperty("content").GetProperty("uri").GetString(),
             Is.EqualTo(root.Coord.ToContentUri(isQuadtree: true)));
     }
 
@@ -61,12 +64,19 @@ public class TilesetJsonTests
     public void WriteTilesetJson_ChildrenNestWithMonotonicGE_AndOnlyRootHasTransform()
     {
         var ts = WriteAndParse(BuildTree());
-        var tileRoot = ts.GetProperty("root");
-        double rootGe = tileRoot.GetProperty("geometricError").GetDouble();
 
-        var children = tileRoot.GetProperty("children");
-        Assert.That(children.GetArrayLength(), Is.EqualTo(2));
-        foreach (var child in children.EnumerateArray())
+        var wrapper = ts.GetProperty("root");
+        Assert.That(wrapper.GetProperty("transform").GetArrayLength(), Is.EqualTo(16));
+        var wrapperChildren = wrapper.GetProperty("children");
+        Assert.That(wrapperChildren.GetArrayLength(), Is.EqualTo(1));
+
+        var contentTile = wrapperChildren[0];
+        Assert.That(contentTile.TryGetProperty("transform", out _), Is.False, "content tiles must not carry a transform");
+        double rootGe = contentTile.GetProperty("geometricError").GetDouble();
+
+        var leaves = contentTile.GetProperty("children");
+        Assert.That(leaves.GetArrayLength(), Is.EqualTo(2));
+        foreach (var child in leaves.EnumerateArray())
         {
             Assert.That(child.GetProperty("geometricError").GetDouble(), Is.LessThan(rootGe));
             Assert.That(child.TryGetProperty("transform", out _), Is.False, "child tiles must not carry a transform");
