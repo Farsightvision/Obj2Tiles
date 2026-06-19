@@ -218,7 +218,7 @@ namespace Obj2Tiles
             {
                 int ceiling = config.AdaptiveExtendMaxDepth > 0
                     ? config.AdaptiveExtendMaxDepth
-                    : maxDepth + 3;
+                    : maxDepth + ConformalHierarchyStage.AdaptiveExtendDepthSlack;
                 int addedCount = ConformalHierarchyStage.ExtendAdaptive(
                     root, autoDepth: maxDepth, hardCeiling: ceiling,
                     maxAtlasSize: config.MaxAtlasSize,

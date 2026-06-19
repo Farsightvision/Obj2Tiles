@@ -9,6 +9,8 @@ namespace Obj2Tiles.Stages;
 
 public static class ConformalHierarchyStage
 {
+    public const int AdaptiveExtendDepthSlack = 3;
+
     // meshopt vertex_lock byte semantics (MeshoptInterop is internal).
     private const byte VERTEX_LOCK    = 1 << 0;
     private const byte VERTEX_PROTECT = 1 << 1;
