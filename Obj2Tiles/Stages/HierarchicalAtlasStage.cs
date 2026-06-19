@@ -57,14 +57,6 @@ public static class HierarchicalAtlasStage
                  && config.AtlasMaxDepthSchedule.TryGetValue(tileDepth, out var scheduledCap))
         {
             defaultCap = scheduledCap;
-            // Shallow tiles with many faces can hit the gutter-floor throw;
-            // bump the cap one rung so the bin-pack converges.
-            if (tileDepth <= 1 && faceTs.Count > 30000 && defaultCap < 2048)
-            {
-                int newCap = Math.Min(2048, defaultCap * 2);
-                Console.WriteLine($" -> cluster-aware cap bump (depth={tileDepth} faces={faceTs.Count}): {defaultCap} → {newCap}");
-                defaultCap = newCap;
-            }
         }
         else
         {
@@ -170,6 +162,7 @@ public static class HierarchicalAtlasStage
             FilePath = outputObjPath,
             Name = tileName,
             AtlasUnsharpAmount = config.AtlasUnsharpAmount,
+            AtlasCapCeiling = config.MaxAtlasSize,
         };
         long t1 = Stopwatch.GetTimestamp();
         Interlocked.Add(ref CtorTicks, t1 - t0);
