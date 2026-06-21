@@ -113,7 +113,7 @@ public static partial class HierarchicalTilingStage
     /// /proc/meminfo MemAvailable (host node) and the GC's cgroup headroom (limit - load).
     /// MemAvailable alone reports the host, not the pod cgroup, so it over-estimates in a
     /// memory-limited container; the GC term caps it to the actual limit.</summary>
-    private static long LiveAvailableBytes()
+    internal static long LiveAvailableBytes()
     {
         var gc = GC.GetGCMemoryInfo();
         long gcAvail = gc.TotalAvailableMemoryBytes > 0
@@ -137,25 +137,49 @@ public static partial class HierarchicalTilingStage
         return Math.Min(osAvail, gcAvail);
     }
 
-    /// <summary>Clamp the desired Phase-1 worker count to fit live available memory.</summary>
-    private static int Phase1AdaptiveMdop(int desiredMdop, long reserveBytes, int capEdge)
-        => ClampWorkersToMemory(desiredMdop, LiveAvailableBytes(), reserveBytes, capEdge);
+    // RGBA buffers a Phase-1 worker holds at once (decode + resample + atlas + dilation); ~2 GiB at 8192².
+    private const long PerWorkerTexBuffersDiffuse = 8L;
+    // Normal maps add a second decode, the normal atlas, and its dilation scratch.
+    private const long PerWorkerTexBuffersWithNormals = 14L;
+    // Clamp capEdge so capEdge² can't overflow long.
+    private const int MaxModeledEdge = 32768;
+    // Used when neither the resident-cache cap nor the atlas cap is set.
+    private const int DefaultClampEdge = 4096;
+    // Working set of one concurrent simplify depth: ~485 B/face measured, 512 with margin.
+    public const long GeomSimplifyBytesPerFace = 512L;
 
-    /// <summary>
-    /// Largest worker count whose projected peak (reserveBytes + N × per-worker working set)
-    /// stays within ~75% of <paramref name="availBytes"/>, clamped to [1, desiredMdop].
-    /// perWorker = capEdge²×4×8 (≈2 GiB at 8192²); capEdge is clamped to 32768 so the product
-    /// can't overflow long. reserveBytes is the resident cache workers share (pass 0 once it is
-    /// already reflected in availBytes).
-    /// </summary>
+    private static int Phase1AdaptiveMdop(int desiredMdop, long reserveBytes, int capEdge, bool hasNormalMaps)
+        => ClampWorkersToBudget(desiredMdop, LiveAvailableBytes(), reserveBytes,
+                                TexturePerWorkerBytes(capEdge, hasNormalMaps));
+
+    // Resident-cache cap if the cache is on, else the atlas cap, so the clamp still applies cache-off.
+    public static int EffectiveClampEdge(int maxResidentEdge, int maxAtlasSize)
+        => maxResidentEdge > 0 ? maxResidentEdge
+         : maxAtlasSize > 0 ? maxAtlasSize
+         : DefaultClampEdge;
+
+    public static long TexturePerWorkerBytes(int capEdge, bool hasNormalMaps)
+    {
+        long capE = Math.Min(Math.Max(0, (long)capEdge), MaxModeledEdge);
+        long oneBuffer = capE * capE * 4L;
+        return oneBuffer * (hasNormalMaps ? PerWorkerTexBuffersWithNormals : PerWorkerTexBuffersDiffuse);
+    }
+
+    // Largest N with reserveBytes + N×perWorkerBytes within ~75% of availBytes, clamped to [1, desiredMdop].
+    public static int ClampWorkersToBudget(int desiredMdop, long availBytes, long reserveBytes, long perWorkerBytes)
+    {
+        if (desiredMdop <= 1 || perWorkerBytes <= 0) return Math.Max(1, desiredMdop);
+        long forWorkers = (long)(availBytes * 0.75) - Math.Max(0L, reserveBytes);
+        int memMdop = (int)Math.Max(1L, forWorkers / Math.Max(1L, perWorkerBytes));
+        return Math.Max(1, Math.Min(desiredMdop, memMdop));
+    }
+
+    // Back-compat overload: resolve capEdge to a per-worker byte estimate, then defer to ClampWorkersToBudget.
     public static int ClampWorkersToMemory(int desiredMdop, long availBytes, long reserveBytes, int capEdge)
     {
         if (desiredMdop <= 1 || capEdge <= 0) return Math.Max(1, desiredMdop);
-        long capE = Math.Min(capEdge, 32768);
-        long perWorker = capE * capE * 4L * 8L;
-        long forWorkers = (long)(availBytes * 0.75) - Math.Max(0L, reserveBytes);
-        int memMdop = (int)Math.Max(1L, forWorkers / Math.Max(1L, perWorker));
-        return Math.Max(1, Math.Min(desiredMdop, memMdop));
+        return ClampWorkersToBudget(desiredMdop, availBytes, reserveBytes,
+                                    TexturePerWorkerBytes(capEdge, hasNormalMaps: false));
     }
 
     /// <summary>
@@ -238,6 +262,10 @@ public static partial class HierarchicalTilingStage
         bool _predecodeFits = Obj2Tiles.Library.TexturesCache.MaxResidentBytes <= 0
                             || _estResident <= Obj2Tiles.Library.TexturesCache.MaxResidentBytes;
 
+        int _clampEdge = EffectiveClampEdge(Obj2Tiles.Library.TexturesCache.MaxResidentEdge, config.MaxAtlasSize);
+        bool _hasNormalMaps = false;
+        foreach (var mat in materials) { if (!string.IsNullOrEmpty(mat.NormalMap)) { _hasNormalMaps = true; break; } }
+
         // Phase-1 defaults to all cores; the live-RAM clamp below scales it down
         // only if the projected peak won't fit. Override: --phase1-batches-per-material.
         int phase1Mdop = config.Phase1BatchesPerMaterial > 0
@@ -252,7 +280,7 @@ public static partial class HierarchicalTilingStage
         if (_predecodeFits && Obj2Tiles.Library.TexturesCache.MaxResidentBytes > 0
                            && Obj2Tiles.Library.TexturesCache.PersistResident)
         {
-            int fitsMdop = Phase1AdaptiveMdop(phase1Mdop, _estResident, Obj2Tiles.Library.TexturesCache.MaxResidentEdge);
+            int fitsMdop = Phase1AdaptiveMdop(phase1Mdop, _estResident, _clampEdge, _hasNormalMaps);
             if (ShouldDemoteFitsPath(phase1Mdop, fitsMdop))
             {
                 if (config.SourceCacheCapAutoEnabled)
@@ -290,9 +318,9 @@ public static partial class HierarchicalTilingStage
             // and per-worker still bounds the concurrent decode).
             long _reserve = _predecodeFits ? _estResident : 0L;
             int _reqMdop = phase1Mdop;
-            phase1Mdop = Phase1AdaptiveMdop(phase1Mdop, _reserve, Obj2Tiles.Library.TexturesCache.MaxResidentEdge);
+            phase1Mdop = Phase1AdaptiveMdop(phase1Mdop, _reserve, _clampEdge, _hasNormalMaps);
             if (phase1Mdop != _reqMdop)
-                Console.WriteLine($" [perf]   Phase-1 mdop live-RAM clamp {_reqMdop} -> {phase1Mdop} (cap={Obj2Tiles.Library.TexturesCache.MaxResidentEdge}, reserve={_reserve >> 20}MiB, liveAvail={LiveAvailableBytes() >> 20}MiB)");
+                Console.WriteLine($" [perf]   Phase-1 mdop live-RAM clamp {_reqMdop} -> {phase1Mdop} (cap={_clampEdge}{(_hasNormalMaps ? "+norm" : "")}, reserve={_reserve >> 20}MiB, liveAvail={LiveAvailableBytes() >> 20}MiB)");
         }
 
         var swPhase1 = System.Diagnostics.Stopwatch.StartNew();
@@ -364,7 +392,7 @@ public static partial class HierarchicalTilingStage
                 // Over-budget path: one barrier-free pass over all tiles. Per-material eviction
                 // bounds resident to ~mdop in-flight sources, so no per-chunk barriers are needed.
                 // Re-clamp mdop once against post-load live RAM (resident is steady under eviction).
-                int _passMdop = Phase1AdaptiveMdop(phase1Mdop, 0L, Obj2Tiles.Library.TexturesCache.MaxResidentEdge);
+                int _passMdop = Phase1AdaptiveMdop(phase1Mdop, 0L, _clampEdge, _hasNormalMaps);
                 if (_passMdop != phase1Mdop)
                     Console.WriteLine($" [perf]   Phase-1 over-budget pass mdop {phase1Mdop} -> {_passMdop} (live-RAM, reserve=0, liveAvail={LiveAvailableBytes() >> 20}MiB)");
                 phase1Mdop = _passMdop;
