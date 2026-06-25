@@ -9,6 +9,8 @@ namespace Obj2Tiles.Stages;
 
 public static class ConformalHierarchyStage
 {
+    public const int AdaptiveExtendDepthSlack = 3;
+
     // meshopt vertex_lock byte semantics (MeshoptInterop is internal).
     private const byte VERTEX_LOCK    = 1 << 0;
     private const byte VERTEX_PROTECT = 1 << 1;
@@ -337,7 +339,17 @@ public static class ConformalHierarchyStage
 
             perDepthCells[d] = OctreeSplitter.PartitionAtDepth(enrichedVerts, enrichedTex, simpFaces, sceneBounds, shape, d);
         }
-        System.Threading.Tasks.Parallel.For(0, maxDepth + 1, ComputeDepth);
+        // Clamp how many depths simplify at once to the RAM budget. Each writes its own perDepthCells
+        // slot from the immutable enriched mesh, so this only lowers peak RAM, never changes the tree.
+        long perDepthBytes = (long)enrichedFaces.Count * HierarchicalTilingStage.GeomSimplifyBytesPerFace;
+        int geomWorkers = HierarchicalTilingStage.ClampWorkersToBudget(
+            maxDepth + 1, HierarchicalTilingStage.LiveAvailableBytes(), 0L, perDepthBytes);
+        if (geomWorkers < maxDepth + 1)
+            Console.WriteLine($" [perf]   Conformal per-depth simplify mdop {maxDepth + 1} -> {geomWorkers} " +
+                $"(live-RAM clamp; ~{perDepthBytes >> 20}MiB/depth × {maxDepth + 1} depths)");
+        System.Threading.Tasks.Parallel.For(0, maxDepth + 1,
+            new System.Threading.Tasks.ParallelOptions { MaxDegreeOfParallelism = geomWorkers },
+            ComputeDepth);
 
         // Assemble serially in depth order to keep nodesByCoord insertion order stable.
         for (int d = 0; d <= maxDepth; d++)

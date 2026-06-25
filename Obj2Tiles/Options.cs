@@ -55,7 +55,7 @@ public sealed class Options
     [Option("phase1-batches-per-material", Required = false, HelpText = "HLOD: max degree of parallelism for Phase-1 atlas-pack stage. 0 = ProcessorCount/2. Bounds peak RAM in the parallel path when the texture set is large.", Default = 0)]
     public int Phase1BatchesPerMaterial { get; set; }
 
-    [Option("source-cache-cap", Required = false, HelpText = "HLOD experiment (Phase 8): decode each source texture ONCE, downsample so its longest edge <= N px, and hold it resident for the whole bake (no per-chunk Clear). Eliminates the ~7x re-decode the HLOD chunk-Clear forces and uses LESS peak RAM than full-res. Set to --max-atlas-size to keep all usable detail (no atlas exceeds the cap). 0 = off (legacy full-res, re-decode per chunk).", Default = 0)]
+    [Option("source-cache-cap", Required = false, HelpText = "HLOD: decode each source texture ONCE, downsample so its longest edge <= N px, and hold it resident for the whole bake (no per-chunk Clear). Eliminates the ~7x re-decode the HLOD chunk-Clear forces and uses LESS peak RAM than full-res. Set to --max-atlas-size to keep all usable detail (no atlas exceeds the cap). 0 = off (legacy full-res, re-decode per chunk).", Default = 0)]
     public int SourceCacheCap { get; set; }
 
     [Option("max-atlas-area", Required = false, HelpText = "Maximum total atlas area for batch processing (pixels squared)", Default = 8102 * 8102)]

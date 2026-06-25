@@ -33,29 +33,37 @@ public sealed record ModelMetrics(
         if (objDirectory != null)
         {
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var m in materials)
+
+            void Account(string? texturePath, bool countCompressed)
             {
-                if (string.IsNullOrEmpty(m.Texture)) continue;
-                var path = Path.IsPathRooted(m.Texture)
-                    ? m.Texture
-                    : Path.Combine(objDirectory, m.Texture);
-                if (!seen.Add(path)) continue;
-                try
+                if (string.IsNullOrEmpty(texturePath)) return;
+                var path = Path.IsPathRooted(texturePath)
+                    ? texturePath
+                    : Path.Combine(objDirectory, texturePath);
+                if (!seen.Add(path)) return;
+                if (countCompressed)
                 {
-                    var fi = new FileInfo(path);
-                    if (fi.Exists) texBytes += fi.Length;
+                    try
+                    {
+                        var fi = new FileInfo(path);
+                        if (fi.Exists) texBytes += fi.Length;
+                    }
+                    catch { /* best-effort */ }
                 }
-                catch { /* file may have moved; metrics are best-effort */ }
                 try
                 {
-                    // Decoded RGBA32 footprint (Σ W*H*4) drives peak RAM; the
-                    // compressed TextureBytes above must not gate memory. Reads
-                    // only the image header (cached), no decode.
                     var info = Obj2Tiles.Library.TexturesCache.GetTextureInfo(path);
                     decodedBytes += (long)info.Width * info.Height * 4L;
                 }
-                catch { /* unreadable header; best-effort */ }
+                catch { /* best-effort */ }
             }
+
+            // Diffuse first so a shared normal-map path can't steal a later diffuse's dedup slot;
+            // TextureBytes feeds the depth axis and must stay diffuse-only.
+            foreach (var m in materials)
+                Account(m.Texture, countCompressed: true);
+            foreach (var m in materials)
+                Account(m.NormalMap, countCompressed: false);
         }
 
         return new ModelMetrics(triangleCount, vertexCount, diag, texBytes, decodedBytes);

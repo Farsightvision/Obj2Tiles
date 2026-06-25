@@ -29,7 +29,7 @@ public class MeshT_Hlod : IMesh
 
     // Shrink the gutter as cluster count grows: at high cluster counts each atlas
     // patch is tiny and a 16-px gutter would dominate the area budget.
-    internal static int EffectiveGutterPixels(int clusterCount)
+    public static int EffectiveGutterPixels(int clusterCount)
     {
         if (clusterCount > 1000) return 4;
         if (clusterCount > 200)  return 8;
@@ -50,7 +50,7 @@ public class MeshT_Hlod : IMesh
     private readonly bool _saveVertexColor;
     private readonly double _textureQuality;
     private readonly int _jpegQuality;
-    private readonly int _maxAtlasSize;
+    private int _maxAtlasSize;
     private readonly List<RGB> _vertexColors;
     private List<Material> _materials;
     private List<Vertex2> _textureVertices;
@@ -68,6 +68,7 @@ public class MeshT_Hlod : IMesh
     public IReadOnlyList<FaceT> Faces => _faces;
     public IReadOnlyList<Material> Materials => _materials;
     public int AtlasEdgeLength { get; private set; }
+    public int TextureBearingClusterCount => _clusterInfos?.Count ?? 0;
     public string FilePath { get; set; }
 
     public MeshT_Hlod(
@@ -101,6 +102,8 @@ public class MeshT_Hlod : IMesh
 
     /// <summary>Unsharp-mask strength (0 = off, 1 = strong) applied before JPEG encode.</summary>
     public double AtlasUnsharpAmount { get; set; } = 0.0;
+
+    public int AtlasCapCeiling { get; set; } = 0;
 
     public int Split(IVertexUtils utils, double q, out IMesh left,
         out IMesh right)
@@ -426,6 +429,112 @@ public class MeshT_Hlod : IMesh
         leftFaces.Add(lface2);
     }
 
+    private double ClusterWorldArea(IReadOnlyList<int> cluster)
+    {
+        double a = 0;
+        for (int i = 0; i < cluster.Count; i++)
+        {
+            var f = _faces[cluster[i]];
+            var va = _vertices[f.IndexA];
+            var vb = _vertices[f.IndexB];
+            var vc = _vertices[f.IndexC];
+            double abx = vb.X - va.X, aby = vb.Y - va.Y, abz = vb.Z - va.Z;
+            double acx = vc.X - va.X, acy = vc.Y - va.Y, acz = vc.Z - va.Z;
+            double cx = aby * acz - abz * acy;
+            double cy = abz * acx - abx * acz;
+            double cz = abx * acy - aby * acx;
+            a += 0.5 * Math.Sqrt(cx * cx + cy * cy + cz * cz);
+        }
+        return a;
+    }
+
+    private void DropSmallestIslandsToFit(Dictionary<int, IReadOnlyList<List<int>>> clustersByMaterial)
+    {
+        int ceiling = AtlasCapCeiling > _maxAtlasSize ? AtlasCapCeiling : _maxAtlasSize;
+        if (ceiling <= 0) return;
+
+        int count = 0;
+        foreach (var kvp in clustersByMaterial)
+        {
+            var mat = _materials[kvp.Key];
+            if (mat.Texture == null && mat.NormalMap == null) continue;
+            count += kvp.Value.Count;
+        }
+        if (count == 0 || ClusterDensity.NeededAtlasEdge(count) <= ceiling) return;
+
+        int maxC = ClusterDensity.MaxClustersForCeiling(ceiling);
+        int target = Math.Max(1, (int)(maxC * 0.85));
+        if (count <= target) return;
+
+        var keyed = new List<(int mat, List<int> cluster, double area)>(count);
+        foreach (var kvp in clustersByMaterial)
+        {
+            var mat = _materials[kvp.Key];
+            if (mat.Texture == null && mat.NormalMap == null) continue;
+            foreach (var cluster in kvp.Value)
+                keyed.Add((kvp.Key, cluster, ClusterWorldArea(cluster)));
+        }
+        keyed.Sort((a, b) => b.area.CompareTo(a.area));
+
+        var droppedFaces = new HashSet<int>();
+        for (int i = target; i < keyed.Count; i++)
+            foreach (var fi in keyed[i].cluster) droppedFaces.Add(fi);
+
+        var map = new int[_faces.Count];
+        var newFaces = new List<FaceT>(_faces.Count - droppedFaces.Count);
+        for (int i = 0; i < _faces.Count; i++)
+        {
+            if (droppedFaces.Contains(i)) { map[i] = -1; continue; }
+            map[i] = newFaces.Count;
+            newFaces.Add(_faces[i]);
+        }
+        _faces.Clear();
+        _faces.AddRange(newFaces);
+
+        var keptByMat = new Dictionary<int, List<List<int>>>();
+        for (int i = 0; i < target && i < keyed.Count; i++)
+        {
+            var (mat, cluster, _) = keyed[i];
+            var remapped = new List<int>(cluster.Count);
+            for (int k = 0; k < cluster.Count; k++) remapped.Add(map[cluster[k]]);
+            if (!keptByMat.TryGetValue(mat, out var lst)) { lst = new List<List<int>>(); keptByMat[mat] = lst; }
+            lst.Add(remapped);
+        }
+
+        clustersByMaterial.Clear();
+        foreach (var kv in keptByMat) clustersByMaterial[kv.Key] = kv.Value;
+
+        RemoveUnusedVertices();
+
+        Console.WriteLine(
+            $" [HLOD island-drop] {Name} {count} -> {target} clusters (dropped {count - target} smallest by world area, cap {ceiling})");
+    }
+
+    private void RaiseCapForClusterFloor(int clusterCount)
+    {
+        if (_maxAtlasSize <= 0 || clusterCount <= 0)
+            return;
+
+        int g = EffectiveGutterPixels(clusterCount);
+        double floorEdge = 1 + 2 * g;
+        double minArea = clusterCount * floorEdge * floorEdge / 0.5;
+        int minEdge = Common.NextPowerOfTwo((int)Math.Ceiling(Math.Sqrt(minArea)));
+
+        if (minEdge <= _maxAtlasSize)
+            return;
+
+        int ceiling = AtlasCapCeiling > _maxAtlasSize ? AtlasCapCeiling : _maxAtlasSize;
+        if (minEdge > ceiling)
+            throw new InvalidOperationException(
+                $"Atlas pack infeasible at ceiling: {clusterCount} clusters need >= {minEdge}px edge " +
+                $"(gutter {g}px floor, 0.5 pack efficiency) but ceiling is {ceiling}px. " +
+                "Split this tile (deeper LOD) or raise --max-atlas-size.");
+
+        Console.WriteLine(
+            $" [HLOD cap-raise] {Name} clusters={clusterCount} gutter={g} cap {_maxAtlasSize} -> {minEdge} (ceiling {ceiling})");
+        _maxAtlasSize = minEdge;
+    }
+
     /// <summary>
     /// Builds cluster info, sizes the atlas, and bin-packs each cluster's PackedRect.
     /// </summary>
@@ -492,6 +601,18 @@ public class MeshT_Hlod : IMesh
 
             clustersByMaterial.Add(m, clusters);
         }
+
+        DropSmallestIslandsToFit(clustersByMaterial);
+
+        int textureBearingClusters = 0;
+        foreach (var kvp in clustersByMaterial)
+        {
+            var mat = _materials[kvp.Key];
+            if (mat.Texture == null && mat.NormalMap == null)
+                continue;
+            textureBearingClusters += kvp.Value.Count;
+        }
+        RaiseCapForClusterFloor(textureBearingClusters);
 
         Debug.WriteLine("Building cluster infos");
         _clusterInfos = new List<ClusterInfo>();
@@ -572,24 +693,6 @@ public class MeshT_Hlod : IMesh
         var iterations = 1;
         // Bound edgeLength so a runaway pack loop fails fast instead of spinning.
         const int packEdgeLimit = 1_000_000;
-        // If the gutter ring alone exceeds the cap area, bin-pack convergence is
-        // geometrically impossible; bail before entering the retry loop.
-        if (_maxAtlasSize > 0 && edgeLength >= _maxAtlasSize)
-        {
-            int gPxThis = EffectiveGutterPixels(_clusterInfos.Count);
-            double gutterOnlyArea = (double)_clusterInfos.Count * (2 * gPxThis) * (2 * gPxThis);
-            double capArea = (double)_maxAtlasSize * _maxAtlasSize;
-            if (gutterOnlyArea > capArea)
-            {
-                throw new InvalidOperationException(
-                    $"Atlas pack infeasible (gutter floor): {_clusterInfos.Count} clusters × " +
-                    $"({2 * gPxThis})² gutter = {gutterOnlyArea / 1e6:F1}M px² " +
-                    $"exceeds cap area ({_maxAtlasSize}² = {capArea / 1e6:F1}M px²). " +
-                    "Bin-pack convergence is geometrically impossible. Options: " +
-                    "(a) raise --max-atlas-size for this depth, (b) reduce AtlasGutterPixels, " +
-                    "(c) aggregate UV islands before packing, (d) split this tile (deeper LOD).");
-            }
-        }
         bool computedJumpUsed = false;
         int postJumpRetries = 0;
         const int postJumpRetryLimit = 200;
@@ -642,13 +745,27 @@ public class MeshT_Hlod : IMesh
                 {
                     postJumpRetries++;
                     if (postJumpRetries > postJumpRetryLimit)
+                    {
+                        int ceiling = AtlasCapCeiling > _maxAtlasSize ? AtlasCapCeiling : _maxAtlasSize;
+                        int escalated = Common.NextPowerOfTwo(_maxAtlasSize + 1);
+                        if (escalated <= ceiling)
+                        {
+                            Console.WriteLine(
+                                $" [HLOD cap-raise] {Name} clusters={_clusterInfos.Count} pack-stall cap {_maxAtlasSize} -> {escalated} (ceiling {ceiling})");
+                            _maxAtlasSize = escalated;
+                            edgeLength = _maxAtlasSize;
+                            scale = Math.Min(1.0, (double)_maxAtlasSize / Math.Max(_naturalAtlasEdgeLength, 1));
+                            computedJumpUsed = false;
+                            postJumpRetries = 0;
+                            iterations++;
+                            continue;
+                        }
                         throw new InvalidOperationException(
-                            $"Atlas packing did not converge after B.12 jump + " +
-                            $"{postJumpRetryLimit} fine-shrink retries " +
-                            $"({_clusterInfos.Count} clusters, scale={scale:F4}, cap={_maxAtlasSize}). " +
-                            "B.12 jump landed close but bin-pack still cannot fit. " +
-                            "Likely bin-pack fragmentation worse than the 0.55 efficiency model " +
-                            "or gutter-area-floor edge case. Options as in gutter-floor diagnostic.");
+                            $"Atlas packing did not converge after cap escalation to ceiling " +
+                            $"({_clusterInfos.Count} clusters, scale={scale:F4}, cap={_maxAtlasSize}, ceiling={ceiling}). " +
+                            "Bin-pack fragmentation exceeds available area even at the leaf cap. " +
+                            "Split this tile (deeper LOD) or raise --max-atlas-size.");
+                    }
                     scale *= 0.98;
                 }
             }
