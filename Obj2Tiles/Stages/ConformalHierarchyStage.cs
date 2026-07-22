@@ -304,10 +304,7 @@ public static class ConformalHierarchyStage
         int maxDepth,
         LodConfig[] lods)
     {
-        double sceneDiagonal = Math.Sqrt(
-            sceneBounds.Width * sceneBounds.Width +
-            sceneBounds.Height * sceneBounds.Height +
-            sceneBounds.Depth * sceneBounds.Depth);
+        double sceneDiagonal = Diagonal(sceneBounds);
         RequireTileableScene(srcFaces.Count, sceneDiagonal);
 
         var (enrichedVerts, enrichedTex, enrichedFaces, skel) =
@@ -471,6 +468,224 @@ public static class ConformalHierarchyStage
 
     public static int CountAllNodes(HierarchicalNode root) => CountSubtree(root);
 
+    internal static double Diagonal(Box3 b)
+        => Math.Sqrt(b.Width * b.Width + b.Height * b.Height + b.Depth * b.Depth);
+
+    internal const int Max16BitIndexCount = 65534;
+
+    public static int EnforceIndexBudget(
+        HierarchicalNode root,
+        SubdivisionShape shape,
+        Box3 sceneBounds)
+    {
+        int splitCount = 0;
+        EnforceIndexBudgetImpl(root, Max16BitIndexCount, shape, sceneBounds, ref splitCount);
+        ExpandBoundsBottomUp(root);
+        return splitCount;
+    }
+
+    private static void EnforceIndexBudgetImpl(
+        HierarchicalNode node,
+        int budget,
+        SubdivisionShape shape,
+        Box3 sceneBounds,
+        ref int splitCount)
+    {
+        if (!ExceedsIndexBudget(node.TileContentT, budget))
+        {
+            foreach (var c in node.Children)
+                EnforceIndexBudgetImpl(c, budget, shape, sceneBounds, ref splitCount);
+            return;
+        }
+
+        var mesh = node.TileContentT!;
+        var originalChildren = new List<HierarchicalNode>(node.Children);
+        node.Children.Clear();
+
+        var cells = OctreeSplitter.PartitionAtDepth(
+            mesh.Vertices,
+            mesh.TexVertices,
+            mesh.Faces,
+            NodeSplitBounds(node, sceneBounds),
+            shape,
+            depth: 1);
+
+        if (cells.Count <= 1)
+        {
+            foreach (var c in originalChildren) node.Children.Add(c);
+            foreach (var c in originalChildren)
+                EnforceIndexBudgetImpl(c, budget, shape, sceneBounds, ref splitCount);
+            Console.WriteLine($" -> WARN: 16-bit budget split could not subdivide tile L{node.Coord.Level}/X{node.Coord.X}/Y{node.Coord.Y}/Z{node.Coord.Z}; verts={mesh.Vertices.Length}, uvs={mesh.TexVertices.Length}, faces={mesh.Faces.Length}, maxMaterialFaces={MaxFacesPerMaterial(mesh)}");
+            return;
+        }
+
+        foreach (var (relCoord, content) in cells)
+        {
+            if (content.Faces.Length == 0) continue;
+            node.Children.Add(new HierarchicalNode
+            {
+                Coord = ChildCellCoord(node, relCoord),
+                Bounds = ComputeBoundsLocal(content.Vertices),
+                TileContentT = content,
+                IsBudgetSplitContent = true,
+            });
+        }
+
+        node.TileContentT = null;
+        node.BudgetSplitSourceContentT = mesh;
+        splitCount++;
+
+        foreach (var c in node.Children)
+            EnforceIndexBudgetImpl(c, budget, shape, sceneBounds, ref splitCount);
+
+        foreach (var c in originalChildren)
+            InsertOriginalChildUnderBudgetSplit(node, c, budget, shape, sceneBounds, ref splitCount);
+    }
+
+    private static void InsertOriginalChildUnderBudgetSplit(
+        HierarchicalNode budgetNode,
+        HierarchicalNode original,
+        int budget,
+        SubdivisionShape shape,
+        Box3 sceneBounds,
+        ref int splitCount)
+    {
+        var budgetChildren = BudgetGridChildren(budgetNode);
+        var pieces = budgetChildren.Count == 0
+            ? new List<HierarchicalNode>()
+            : SplitOriginalForBudgetChildren(original, budgetNode, budgetChildren, shape, sceneBounds);
+        if (pieces.Count == 0)
+        {
+            EnforceIndexBudgetImpl(original, budget, shape, sceneBounds, ref splitCount);
+            budgetNode.Children.Add(original);
+            return;
+        }
+
+        foreach (var piece in pieces)
+        {
+            var target = budgetChildren.Find(c => c.Coord.Equals(piece.Coord));
+            if (target == null)
+            {
+                EnforceIndexBudgetImpl(piece, budget, shape, sceneBounds, ref splitCount);
+                budgetNode.Children.Add(piece);
+            }
+            else
+            {
+                InsertOriginalChildUnderBudgetSplit(target, piece, budget, shape, sceneBounds, ref splitCount);
+            }
+        }
+    }
+
+    private static List<HierarchicalNode> BudgetGridChildren(HierarchicalNode node)
+    {
+        var result = new List<HierarchicalNode>();
+        foreach (var c in node.Children)
+            if (c.Coord.Level == node.Coord.Level + 1 && ContainsCoord(node.Coord, c.Coord))
+                result.Add(c);
+        return result;
+    }
+
+    private static List<HierarchicalNode> SplitOriginalForBudgetChildren(
+        HierarchicalNode original,
+        HierarchicalNode budgetNode,
+        List<HierarchicalNode> budgetChildren,
+        SubdivisionShape shape,
+        Box3 sceneBounds)
+    {
+        var byCoord = new Dictionary<CellCoord, HierarchicalNode>();
+
+        if (original.TileContentT != null && original.TileContentT.Faces.Length > 0)
+        {
+            var cells = OctreeSplitter.PartitionAtDepth(
+                original.TileContentT.Vertices,
+                original.TileContentT.TexVertices,
+                original.TileContentT.Faces,
+                NodeSplitBounds(budgetNode, sceneBounds),
+                shape,
+                depth: 1);
+
+            foreach (var (relCoord, content) in cells)
+            {
+                if (content.Faces.Length == 0) continue;
+                var coord = ChildCellCoord(budgetNode, relCoord);
+                byCoord[coord] = new HierarchicalNode
+                {
+                    Coord = coord,
+                    Bounds = ComputeBoundsLocal(content.Vertices),
+                    TileContentT = content,
+                };
+            }
+        }
+
+        foreach (var child in original.Children)
+        {
+            var target = budgetChildren.Find(bc => ContainsCoord(bc.Coord, child.Coord));
+            if (target == null) continue;
+            if (!byCoord.TryGetValue(target.Coord, out var piece))
+            {
+                piece = new HierarchicalNode
+                {
+                    Coord = target.Coord,
+                    Bounds = child.Bounds,
+                };
+                byCoord[target.Coord] = piece;
+            }
+            piece.Children.Add(child);
+        }
+
+        return new List<HierarchicalNode>(byCoord.Values);
+    }
+
+    private static bool ExceedsIndexBudget(ClipResultT? tile, int budget)
+    {
+        if (tile == null || tile.Faces.Length == 0) return false;
+        return tile.Vertices.Length > budget
+            || tile.TexVertices.Length > budget
+            || tile.Faces.Length > budget
+            || MaxFacesPerMaterial(tile) > budget;
+    }
+
+    internal static Dictionary<int, int> CountFacesByMaterial(ClipResultT tile)
+    {
+        var counts = new Dictionary<int, int>();
+        foreach (var f in tile.Faces)
+            counts[f.MaterialIndex] = counts.TryGetValue(f.MaterialIndex, out var c) ? c + 1 : 1;
+        return counts;
+    }
+
+    private static int MaxFacesPerMaterial(ClipResultT tile)
+    {
+        int max = 0;
+        foreach (var count in CountFacesByMaterial(tile).Values)
+            if (count > max) max = count;
+        return max;
+    }
+
+    private static CellCoord ChildCellCoord(HierarchicalNode parent, CellCoord rel)
+        => new CellCoord(
+            parent.Depth + 1,
+            parent.Coord.X * 2 + rel.X,
+            parent.Coord.Y * 2 + rel.Y,
+            parent.Coord.Z * 2 + rel.Z);
+
+    private static bool ContainsCoord(CellCoord parent, CellCoord child)
+    {
+        if (parent.Level > child.Level) return false;
+        int shift = child.Level - parent.Level;
+        return parent.X == (child.X >> shift)
+            && parent.Y == (child.Y >> shift)
+            && parent.Z == (child.Z >> shift);
+    }
+
+    private static Box3 NodeSplitBounds(HierarchicalNode node, Box3 sceneBounds)
+    {
+        var b = node.Bounds;
+        double dx = b.Max.X - b.Min.X;
+        double dy = b.Max.Y - b.Min.Y;
+        double dz = b.Max.Z - b.Min.Z;
+        return dx > 0 && dy > 0 && (dz > 0 || sceneBounds.Depth == 0) ? b : sceneBounds;
+    }
+
     /// <summary>
     /// Predict the pow2 atlas side this node would get at pack time, clamped to
     /// the depth-appropriate cap. Mirrors HierarchicalAtlasStage but skips the
@@ -589,15 +804,10 @@ public static class ConformalHierarchyStage
             return;
         }
 
-        int parentX = node.Coord.X, parentY = node.Coord.Y, parentZ = node.Coord.Z;
         foreach (var (relCoord, content) in cells)
         {
             if (content.Faces.Length == 0) continue;
-            var childCoord = new CellCoord(
-                node.Depth + 1,
-                parentX * 2 + relCoord.X,
-                parentY * 2 + relCoord.Y,
-                parentZ * 2 + relCoord.Z);
+            var childCoord = ChildCellCoord(node, relCoord);
             var child = new HierarchicalNode
             {
                 Coord = childCoord,
@@ -612,10 +822,7 @@ public static class ConformalHierarchyStage
 
         // No longer a leaf: give it a non-zero geometric error (bbox diagonal)
         // so SSE refinement triggers.
-        double bx = node.Bounds.Max.X - node.Bounds.Min.X;
-        double by = node.Bounds.Max.Y - node.Bounds.Min.Y;
-        double bz = node.Bounds.Max.Z - node.Bounds.Min.Z;
-        node.GeometricError = Math.Sqrt(bx * bx + by * by + bz * bz);
+        node.GeometricError = Diagonal(node.Bounds);
 
         foreach (var c in node.Children)
             ExtendAdaptiveImpl(c, autoDepth, hardCeiling, maxAtlasSize, leafDensity, shape, ref added);
