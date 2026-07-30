@@ -27,8 +27,10 @@ public static partial class HierarchicalTilingStage
         Directory.CreateDirectory(outputDir);
         var transform = EnuToEcefTransform(latitude, longitude, altitude);
         bool isQuadtree = shape == SubdivisionShape.Quadtree;
+        // Re-derives the same URIs WriteAllGlbs assigned; tree must not mutate between phases.
+        AssignContentUris(root, isQuadtree);
 
-        var contentTile = BuildTileObject(root, isQuadtree, includeTransform: false, null);
+        var contentTile = BuildTileObject(root, includeTransform: false, null);
         var rootBox = new
         {
             box = OctreeSplitter.AabbBox(new[]
@@ -59,10 +61,10 @@ public static partial class HierarchicalTilingStage
                 new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore }));
     }
 
-    private static object BuildTileObject(HierarchicalNode n, bool isQuadtree, bool includeTransform, double[]? transform)
+    private static object BuildTileObject(HierarchicalNode n, bool includeTransform, double[]? transform)
     {
         var children = new List<object>();
-        foreach (var c in n.Children) children.Add(BuildTileObject(c, isQuadtree, includeTransform: false, null));
+        foreach (var c in n.Children) children.Add(BuildTileObject(c, includeTransform: false, null));
         return new
         {
             transform = includeTransform ? transform : null,
@@ -76,9 +78,37 @@ public static partial class HierarchicalTilingStage
             },
             geometricError = n.GeometricError,
             refine = "REPLACE",
-            content = new { uri = n.Coord.ToContentUri(isQuadtree) },
+            content = n.ContentUri != null ? new { uri = n.ContentUri } : null,
             children = children.Count > 0 ? children : null,
         };
+    }
+
+    private static void AssignContentUris(HierarchicalNode root, bool isQuadtree)
+    {
+        var used = new Dictionary<string, int>();
+        void Walk(HierarchicalNode n)
+        {
+            if (n.TileContentT != null && n.TileContentT.Faces.Length > 0)
+            {
+                string uri = n.Coord.ToContentUri(isQuadtree);
+                used.TryGetValue(uri, out int count);
+                used[uri] = count + 1;
+                n.ContentUri = count == 0 ? uri : SuffixedUri(uri, count);
+            }
+            else
+            {
+                n.ContentUri = null;
+            }
+            foreach (var c in n.Children) Walk(c);
+        }
+        Walk(root);
+    }
+
+    private static string SuffixedUri(string uri, int count)
+    {
+        string ext = Path.GetExtension(uri);
+        string stem = uri.Substring(0, uri.Length - ext.Length);
+        return $"{stem}__{count}{ext}";
     }
 
     /// <summary>
@@ -243,6 +273,7 @@ public static partial class HierarchicalTilingStage
         // Phase 2 reads each OBJ off disk, so its converters share no state.
         var tiles = new List<HierarchicalNode>();
         Walk(root, tiles);
+        AssignContentUris(root, isQuadtree);
 
         // Depth of the deepest leaf, drives the per-LOD density schedule.
         int maxDepth = 0;
@@ -358,9 +389,9 @@ public static partial class HierarchicalTilingStage
                 int ma = PrimaryMaterialIndex(a);
                 int mb = PrimaryMaterialIndex(b);
                 if (ma != mb) return ma.CompareTo(mb);
-                // Tie-break on depth then coord for determinism.
+                // Tie-break on depth then content URI for determinism.
                 if (a.Depth != b.Depth) return a.Depth.CompareTo(b.Depth);
-                return string.CompareOrdinal(a.Coord.ToContentUri(isQuadtree), b.Coord.ToContentUri(isQuadtree));
+                return string.CompareOrdinal(a.ContentUri, b.ContentUri);
             });
             if (Obj2Tiles.Library.TexturesCache.PersistResident && _predecodeFits)
             {
@@ -374,14 +405,14 @@ public static partial class HierarchicalTilingStage
                     int fa = a.TileContentT?.Faces.Length ?? 0;
                     int fb = b.TileContentT?.Faces.Length ?? 0;
                     if (fa != fb) return fb.CompareTo(fa);
-                    return string.CompareOrdinal(a.Coord.ToContentUri(isQuadtree), b.Coord.ToContentUri(isQuadtree));
+                    return string.CompareOrdinal(a.ContentUri, b.ContentUri);
                 });
                 Parallel.ForEach(
                     loopTiles,
                     new ParallelOptions { MaxDegreeOfParallelism = phase1Mdop },
                     n =>
                     {
-                        var p = PrepareTileForGlb(n, outputDir, isQuadtree, materials, config, maxDepth, evictPerMaterial: false);
+                        var p = PrepareTileForGlb(n, outputDir, materials, config, maxDepth, evictPerMaterial: false);
                         atlasEdges.Add((n.Depth, p.AtlasEdge));
                         preparedBag.Add(p);
                     });
@@ -403,14 +434,14 @@ public static partial class HierarchicalTilingStage
                     int fa = a.TileContentT?.Faces.Length ?? 0;
                     int fb = b.TileContentT?.Faces.Length ?? 0;
                     if (fa != fb) return fb.CompareTo(fa);
-                    return string.CompareOrdinal(a.Coord.ToContentUri(isQuadtree), b.Coord.ToContentUri(isQuadtree));
+                    return string.CompareOrdinal(a.ContentUri, b.ContentUri);
                 });
                 Parallel.ForEach(
                     loopTiles,
                     new ParallelOptions { MaxDegreeOfParallelism = _passMdop },
                     n =>
                     {
-                        var p = PrepareTileForGlb(n, outputDir, isQuadtree, materials, config, maxDepth, evictPerMaterial: true);
+                        var p = PrepareTileForGlb(n, outputDir, materials, config, maxDepth, evictPerMaterial: true);
                         atlasEdges.Add((n.Depth, p.AtlasEdge));
                         preparedBag.Add(p);
                     });
@@ -423,7 +454,7 @@ public static partial class HierarchicalTilingStage
         {
             foreach (var n in tiles)
             {
-                var p = PrepareTileForGlb(n, outputDir, isQuadtree, materials, config, maxDepth, evictPerMaterial: true);
+                var p = PrepareTileForGlb(n, outputDir, materials, config, maxDepth, evictPerMaterial: true);
                 atlasEdges.Add((n.Depth, p.AtlasEdge));
                 preparedBag.Add(p);
             }
@@ -655,14 +686,8 @@ public static partial class HierarchicalTilingStage
         {
             var t = n.TileContentT;
             if (t == null || t.Faces.Length == 0) return -1;
-            var counts = new Dictionary<int, int>();
-            foreach (var f in t.Faces)
-            {
-                int mi = f.MaterialIndex;
-                counts[mi] = counts.TryGetValue(mi, out var c) ? c + 1 : 1;
-            }
             int bestIdx = -1, bestCnt = -1;
-            foreach (var kv in counts)
+            foreach (var kv in ConformalHierarchyStage.CountFacesByMaterial(t))
                 if (kv.Value > bestCnt) { bestCnt = kv.Value; bestIdx = kv.Key; }
             return bestIdx;
         }
@@ -705,18 +730,17 @@ public static partial class HierarchicalTilingStage
     private static TilePrepared PrepareTileForGlb(
         HierarchicalNode n,
         string outputDir,
-        bool isQuadtree,
         IReadOnlyList<Material> materials,
         AppConfig config,
         int maxDepth,
         bool evictPerMaterial)
     {
-        string uri = n.Coord.ToContentUri(isQuadtree);
+        string uri = n.ContentUri!;
         string finalGlbPath = Path.Combine(outputDir, uri);
         Directory.CreateDirectory(Path.GetDirectoryName(finalGlbPath)!);
 
-        string tempRoot = Path.Combine(outputDir, ".temp", "tiles",
-            $"L{n.Coord.Level}_X{n.Coord.X}_Y{n.Coord.Y}_Z{n.Coord.Z}");
+        string safeUri = uri.Replace('/', '_').Replace('\\', '_').Replace('.', '_');
+        string tempRoot = Path.Combine(outputDir, ".temp", "tiles", safeUri);
         Directory.CreateDirectory(tempRoot);
         string tileName = $"tile_L{n.Coord.Level}_X{n.Coord.X}_Y{n.Coord.Y}_Z{n.Coord.Z}";
         string objPath = Path.Combine(tempRoot, $"{tileName}.obj");

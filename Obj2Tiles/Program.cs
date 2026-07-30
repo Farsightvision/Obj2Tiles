@@ -246,7 +246,14 @@ namespace Obj2Tiles
             }
             Stage("4c. ExtendAdaptive");
 
-            AssignMeasuredGeometricError(root, meshVerts, bounds);
+            int budgetSplitCount = ConformalHierarchyStage.EnforceIndexBudget(
+                root,
+                shape,
+                bounds);
+            Console.WriteLine($" -> 16-bit tile budget: split {budgetSplitCount} content nodes (ceiling={ConformalHierarchyStage.Max16BitIndexCount} for verts/uvs/material faces)");
+            Stage("4d. EnforceIndexBudget");
+
+            AssignMeasuredGeometricError(root, meshVerts, bounds, config.BaseError);
             Stage("5. AssignMeasuredGeometricError");
 
             ApplyTextureAwareGeometricError(root, config, maxDepth, config.TextureErrorFactor);
@@ -382,12 +389,10 @@ namespace Obj2Tiles
         private static void AssignMeasuredGeometricError(
             HierarchicalNode root,
             IReadOnlyList<Vertex3> originalVerts,
-            Box3 sceneBounds)
+            Box3 sceneBounds,
+            double baseError)
         {
-            double diag = Math.Sqrt(
-                sceneBounds.Width * sceneBounds.Width
-                + sceneBounds.Height * sceneBounds.Height
-                + sceneBounds.Depth * sceneBounds.Depth);
+            double diag = ConformalHierarchyStage.Diagonal(sceneBounds);
 
             var byDepth = new System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<HierarchicalNode>>();
             int maxDepth = 0;
@@ -402,28 +407,45 @@ namespace Obj2Tiles
             var contentNodes = new List<HierarchicalNode>();
             for (int d = 0; d <= maxDepth; d++)
                 foreach (var n in byDepth[d])
-                    if (!n.IsLeaf && n.TileContentT != null && n.TileContentT.Faces.Length > 0)
+                    if (!n.IsLeaf && n.TileContentT != null && n.TileContentT.Faces.Length > 0 && !n.IsBudgetSplitContent)
                         contentNodes.Add(n);
             var measuredErr = new System.Collections.Concurrent.ConcurrentDictionary<HierarchicalNode, double>();
             System.Threading.Tasks.Parallel.ForEach(contentNodes, n => measuredErr[n] = MeasureNode(n));
+            var splitSources = new List<HierarchicalNode>();
+            for (int d = 0; d <= maxDepth; d++)
+                foreach (var n in byDepth[d])
+                    if (n.BudgetSplitSourceContentT != null)
+                        splitSources.Add(n);
+            var splitErr = new System.Collections.Concurrent.ConcurrentDictionary<HierarchicalNode, double>();
+            System.Threading.Tasks.Parallel.ForEach(splitSources, n => splitErr[n] = MeasureContent(n, n.BudgetSplitSourceContentT!));
+            // Depth-ascending so a nested split source inherits the shallowest ancestor's error.
+            foreach (var n in splitSources)
+            {
+                ApplyBudgetSplitGeometricError(n, splitErr[n]);
+                n.BudgetSplitSourceContentT = null;
+            }
 
             for (int d = maxDepth; d >= 0; d--)
                 foreach (var n in byDepth[d])
                 {
-                    if (n.IsLeaf) { n.GeometricError = 0; continue; }
+                    if (n.IsLeaf) { n.GeometricError = n.BudgetSplitGeometricError ?? 0; continue; }
                     if (n.TileContentT == null || n.TileContentT.Faces.Length == 0)
                     {
                         double maxChild0 = 0;
                         foreach (var c in n.Children) if (c.GeometricError > maxChild0) maxChild0 = c.GeometricError;
-                        n.GeometricError = maxChild0 + 1e-3 * diag;
+                        n.GeometricError = Math.Max(maxChild0, WrapperGeometricError(n.Bounds));
                         continue;
                     }
                     var childErrors = new List<double>(n.Children.Count);
                     foreach (var c in n.Children) childErrors.Add(c.GeometricError);
-                    n.GeometricError = HausdorffMetric.MonotonicCorrection(measuredErr[n], childErrors, diag);
+                    var meshError = n.BudgetSplitGeometricError ?? measuredErr[n];
+                    n.GeometricError = HausdorffMetric.MonotonicCorrection(meshError, childErrors, diag);
                 }
 
             double MeasureNode(HierarchicalNode n)
+                => MeasureContent(n, n.TileContentT!);
+
+            double MeasureContent(HierarchicalNode n, ClipResultT content)
             {
                 // Tolerance admits verts snapped exactly onto a cell-boundary clip plane during the split.
                 double tol = 1e-6 * diag;
@@ -442,9 +464,27 @@ namespace Obj2Tiles
                 if (nodeVerts.Count == 0) return 0;
                 return HausdorffMetric.ComputeSampled(
                     originalVerts: nodeVerts,
-                    simplifiedVerts: n.TileContentT.Vertices,
-                    simplifiedFaces: ToFaceArray(n.TileContentT.Faces),
+                    simplifiedVerts: content.Vertices,
+                    simplifiedFaces: ToFaceArray(content.Faces),
                     maxSamples: 50_000);
+            }
+
+            double WrapperGeometricError(Box3 b)
+            {
+                // 10x the node's own diagonal keeps SSE above threshold, so REPLACE refinement
+                // falls through the content-less wrapper instead of stopping at it (blank model).
+                const double alwaysRefineFactor = 10;
+                return Math.Max(baseError, ConformalHierarchyStage.Diagonal(b) * alwaysRefineFactor);
+            }
+
+            void ApplyBudgetSplitGeometricError(HierarchicalNode n, double ge)
+            {
+                foreach (var c in n.Children)
+                {
+                    if (!c.IsBudgetSplitContent) continue;
+                    if (!c.BudgetSplitGeometricError.HasValue) c.BudgetSplitGeometricError = ge;
+                    ApplyBudgetSplitGeometricError(c, ge);
+                }
             }
         }
 

@@ -9,6 +9,14 @@ namespace Obj2Tiles.Test;
 /// <summary>Pins the 3D-Tiles tileset.json contract emitted by HierarchicalTilingStage.WriteTilesetJson.</summary>
 public class TilesetJsonTests
 {
+    /// <summary>Minimal non-empty tile content; a node only gets a content URI when it carries faces.</summary>
+    private static ClipResultT Content() => new()
+    {
+        Vertices = new[] { new Vertex3(0, 0, 0), new Vertex3(1, 0, 0), new Vertex3(0, 1, 0) },
+        TexVertices = new[] { new Vertex2(0, 0), new Vertex2(1, 0), new Vertex2(0, 1) },
+        Faces = new[] { new MeshFace(0, 1, 2, 0, 1, 2, 0) },
+    };
+
     private static HierarchicalNode BuildTree()
     {
         var root = new HierarchicalNode
@@ -16,14 +24,17 @@ public class TilesetJsonTests
             Coord = new CellCoord(0, 0, 0, 0),
             Bounds = new Box3(0, 0, 0, 100, 100, 50),
             GeometricError = 10.0,
+            TileContentT = Content(),
         };
         root.Children.Add(new HierarchicalNode
         {
             Coord = new CellCoord(1, 0, 0, 0), Bounds = new Box3(0, 0, 0, 50, 100, 50), GeometricError = 5.0,
+            TileContentT = Content(),
         });
         root.Children.Add(new HierarchicalNode
         {
             Coord = new CellCoord(1, 1, 0, 0), Bounds = new Box3(50, 0, 0, 100, 100, 50), GeometricError = 3.0,
+            TileContentT = Content(),
         });
         return root;
     }
